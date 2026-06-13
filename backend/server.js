@@ -66,7 +66,7 @@ class CsvLogger {
     if (!fs.existsSync(logPath) || fs.statSync(logPath).size === 0) {
       fs.writeFileSync(
         logPath,
-        "timestamp,label,confidence,category,status,consecutive_risky_frames\n",
+        "timestamp,student_name,label,confidence,category,status,consecutive_risky_frames\n",
         "utf8"
       );
     }
@@ -75,6 +75,7 @@ class CsvLogger {
   write(record) {
     const row = [
       record.timestamp,
+      csvEscape(record.studentName),
       csvEscape(record.label),
       record.confidence.toFixed(6),
       csvEscape(record.category),
@@ -88,6 +89,11 @@ class CsvLogger {
 function csvEscape(value) {
   const text = String(value);
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function studentNameFrom(value) {
+  const text = String(value || "").trim().replace(/\s+/g, " ");
+  return text || "Unknown student";
 }
 
 class ArduinoDisplay {
@@ -218,10 +224,11 @@ function createEvidenceUpload() {
     },
     filename: (request, file, callback) => {
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const student = safeFilePart(request.body.student_name, "unknown-student");
       const category = safeFilePart(request.body.category, "event");
       const label = safeFilePart(request.body.label, "unknown");
       const extension = path.extname(file.originalname) || ".webm";
-      callback(null, `evidence-${timestamp}-${category}-${label}${extension}`);
+      callback(null, `evidence-${timestamp}-${student}-${category}-${label}${extension}`);
     }
   });
 
@@ -263,6 +270,7 @@ function createApp(config, onEvidence) {
       id: path.basename(request.file.filename, path.extname(request.file.filename)),
       timestamp: request.body.timestamp || new Date().toISOString(),
       received_at: new Date().toISOString(),
+      student_name: studentNameFrom(request.body.student_name),
       category: request.body.category || "Unknown",
       status: request.body.status || request.body.category || "Unknown",
       label: request.body.label || "Unknown",
@@ -349,12 +357,14 @@ function main() {
 
       const label = String(event.label || "");
       const confidence = Number(event.confidence || 0);
+      const studentName = studentNameFrom(event.student_name);
       const timestampMs = Date.now();
       const decision = alerts.update(label, confidence, timestampMs);
       const timestamp = new Date(timestampMs).toISOString();
       latestStatus = {
         type: "status",
         timestamp,
+        student_name: studentName,
         status: decision.status,
         category: decision.category,
         cheating_suspected: decision.cheatingSuspected,
@@ -369,6 +379,7 @@ function main() {
       arduino.sendStatus(decision.cheatingSuspected);
       logger.write({
         timestamp,
+        studentName,
         label,
         confidence,
         category: decision.category,

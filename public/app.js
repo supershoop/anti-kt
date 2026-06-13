@@ -21,6 +21,8 @@ const countSafeEl = document.getElementById("cSafe");
 const countRiskyEl = document.getElementById("cRisky");
 const countFailEl = document.getElementById("cFail");
 const flagStatEl = document.getElementById("flagStat");
+const studentNameInput = document.getElementById("studentName");
+const studentDisplayEl = document.getElementById("studentDisplay");
 
 const ctx = canvas.getContext("2d");
 const PRE_EVENT_SECONDS = 5;
@@ -38,6 +40,14 @@ let activeClip = null;
 let currentConfirmedCategory = null;
 let clipCount = 0;
 const evidenceLinks = new Set();
+
+function studentName() {
+  return studentNameInput.value.trim() || "Unknown student";
+}
+
+function updateStudentDisplay() {
+  studentDisplayEl.textContent = studentName();
+}
 
 function applyTheme(theme) {
   document.documentElement.classList.toggle("light", theme === "light");
@@ -288,6 +298,7 @@ function maybeCaptureEventClip(status) {
   currentConfirmedCategory = normalized;
   activeClip = {
     eventTimestamp: status.timestamp || new Date().toISOString(),
+    studentName: status.student_name || studentName(),
     category,
     label: status.label || "Unknown",
     confidence: status.confidence,
@@ -331,15 +342,19 @@ async function finalizeEventClip() {
 }
 
 function evidenceFilename(clip) {
+  const safeStudent = String(clip.studentName || "unknown-student")
+    .replace(/[^a-z0-9]+/gi, "-")
+    .toLowerCase();
   const safeCategory = String(clip.category).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
   const safeLabel = String(clip.label).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
   const safeTimestamp = new Date(clip.eventTimestamp).toISOString().replace(/[:.]/g, "-");
-  return `evidence-${safeTimestamp}-${safeCategory}-${safeLabel}.webm`;
+  return `evidence-${safeTimestamp}-${safeStudent}-${safeCategory}-${safeLabel}.webm`;
 }
 
 async function uploadClip(blob, filename, clip) {
   const form = new FormData();
   form.append("timestamp", clip.eventTimestamp);
+  form.append("student_name", clip.studentName || studentName());
   form.append("category", clip.category);
   form.append("status", clip.category);
   form.append("label", clip.label);
@@ -379,7 +394,9 @@ function addClipLink(url, filename, clip) {
   const timestamp = clip.timestamp || clip.eventTimestamp || clip.received_at;
   const time = timestamp ? new Date(timestamp).toLocaleTimeString() : "saved";
   const confidence = Number(clip.confidence || 0) * 100;
-  meta.textContent = `${clip.category || "Event"} / ${confidence.toFixed(1)}% / ${time}`;
+  meta.textContent = `${clip.student_name || clip.studentName || "Unknown student"} / ${
+    clip.category || "Event"
+  } / ${confidence.toFixed(1)}% / ${time}`;
 
   const row = document.createElement("div");
   row.className = "clip";
@@ -429,6 +446,7 @@ async function predict() {
     socket.send(
       JSON.stringify({
         type: "classification",
+        student_name: studentName(),
         label: top.className,
         confidence: top.probability,
         predictions: predictions.map((prediction) => ({
@@ -455,9 +473,11 @@ function updateClock() {
 }
 
 renderPredictions([]);
+updateStudentDisplay();
 updateClock();
 setInterval(updateClock, 1000);
 connectSocket();
+studentNameInput.addEventListener("input", updateStudentDisplay);
 startButton.addEventListener("click", () => {
   startCamera().catch((error) => {
     startButton.disabled = false;

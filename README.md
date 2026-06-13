@@ -120,6 +120,7 @@ Fields:
 
 - `video`: `.webm` video file.
 - `timestamp`: event timestamp.
+- `student_name`: student name entered in the monitor page.
 - `category`: confirmed category, `Fail` or `Risky`.
 - `status`: same as `category`.
 - `label`: raw top model label.
@@ -141,11 +142,26 @@ address.
 Each connected client receives one JSON message per classification event. A
 newly connected client also receives the latest known status immediately.
 
+The monitor browser sends classification messages to the backend in this shape:
+
+```json
+{
+  "type": "classification",
+  "student_name": "Avery Chen",
+  "label": "Hand",
+  "confidence": 0.938211,
+  "predictions": [
+    { "label": "Hand", "confidence": 0.938211 }
+  ]
+}
+```
+
 Example message:
 
 ```json
 {
   "timestamp": "2026-06-13T14:30:12.123",
+  "student_name": "Avery Chen",
   "status": "All Clear",
   "category": "All Clear",
   "cheating_suspected": false,
@@ -165,6 +181,7 @@ Fields:
 
 - `type`: always `status`.
 - `timestamp`: local backend timestamp for the inference result.
+- `student_name`: student name entered in the monitor page, or `Unknown student` when blank.
 - `status`: confirmed display-ready event category, one of `Fail`, `Risky`, or `All Clear`.
 - `category`: same category value as `status`.
 - `cheating_suspected`: boolean alert state after applying the 70% confidence and sustained-event threshold.
@@ -183,6 +200,7 @@ When a browser uploads an evidence clip, all WebSocket clients also receive:
   "id": "evidence-2026-06-13T18-42-11-123Z-risky-hand",
   "timestamp": "2026-06-13T18:42:06.000Z",
   "received_at": "2026-06-13T18:42:11.123Z",
+  "student_name": "Avery Chen",
   "category": "Risky",
   "status": "Risky",
   "label": "Hand",

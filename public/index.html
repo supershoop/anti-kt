@@ -18,6 +18,10 @@
         <h1 class="display"><b>Hall C</b> <span>/</span> Final Exam</h1>
         <span class="sub">CS&nbsp;404 / PAPER&nbsp;2 / 13&nbsp;JUN&nbsp;2026</span>
       </div>
+      <label class="student-field header-student" for="studentName">
+        <span>Student</span>
+        <input id="studentName" name="studentName" type="text" placeholder="Enter student name" autocomplete="name" />
+      </label>
       <div class="summary">
         <div class="tally"><b id="cTotal">1</b><em>Tracked</em></div>
         <div class="tally safe"><i></i><b id="cSafe">1</b><em>Safe</em></div>
@@ -48,7 +52,7 @@
           <article class="card safe" id="activeCard">
             <div class="top">
               <div>
-                <div class="name">Active feed</div>
+                <div class="name" id="studentDisplay">Unknown student</div>
                 <div class="sid" id="top-label">Waiting for camera</div>
               </div>
               <div class="seat">CAM-01</div>
