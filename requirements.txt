@@ -1,6 +1,7 @@
 numpy>=1.24
 opencv-python>=4.8
 pyserial>=3.5
+websockets>=12.0
 
 # Install one of these model runtimes:
 # tensorflow>=2.13

@@ -16,6 +16,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--confidence", type=float, default=0.7, help="Minimum confidence to count a risky class")
     parser.add_argument("--interval", type=float, default=0.2, help="Seconds between inferences")
     parser.add_argument("--log", type=Path, default=Path("logs/classifications.csv"), help="CSV log path")
+    parser.add_argument("--ws-host", default="127.0.0.1", help="WebSocket bind host")
+    parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket bind port")
     parser.add_argument(
         "--cheating-label",
         action="append",
@@ -38,10 +40,11 @@ def main() -> None:
         confidence_threshold=args.confidence,
         interval_seconds=args.interval,
         log_path=args.log,
+        websocket_host=args.ws_host,
+        websocket_port=args.ws_port,
     )
     ExamRoomClassifier(config).run()
 
 
 if __name__ == "__main__":
     main()
-

@@ -76,6 +76,8 @@ PYTHONPATH=src python -m anti_kt.cli \
   --camera-index 0 \
   --threshold 5 \
   --confidence 0.7 \
+  --ws-host 127.0.0.1 \
+  --ws-port 8765 \
   --cheating-label cheating
 ```
 
@@ -89,3 +91,54 @@ The LCD displays:
   number of consecutive confident frames.
 
 Classification logs are written to `logs/classifications.csv`.
+
+## WebSocket interface
+
+The backend opens a WebSocket status feed at:
+
+```text
+ws://127.0.0.1:8765/status
+```
+
+Use `--ws-host` and `--ws-port` to change the bind address. For another device
+on the same network to connect, bind to `0.0.0.0` and connect to the computer's
+LAN IP address.
+
+Each connected client receives one JSON message per inference loop. A newly
+connected client also receives the latest known status immediately.
+
+Example message:
+
+```json
+{
+  "timestamp": "2026-06-13T14:30:12.123",
+  "status": "Cheating suspected",
+  "cheating_suspected": true,
+  "label": "cheating",
+  "confidence": 0.938211,
+  "consecutive_risky_frames": 5,
+  "type": "status"
+}
+```
+
+Fields:
+
+- `type`: always `status`.
+- `timestamp`: local backend timestamp for the inference result.
+- `status`: display-ready status, either `All clear` or `Cheating suspected`.
+- `cheating_suspected`: boolean alert state after applying the consecutive-frame threshold.
+- `label`: raw top model label for the current frame.
+- `confidence`: model confidence for `label`.
+- `consecutive_risky_frames`: current risky-frame streak.
+
+Minimal browser client:
+
+```html
+<script>
+  const socket = new WebSocket("ws://127.0.0.1:8765/status");
+  socket.onmessage = (event) => {
+    const status = JSON.parse(event.data);
+    console.log(status.cheating_suspected, status.status, status.label);
+  };
+</script>
+```
