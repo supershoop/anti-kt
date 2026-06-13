@@ -3,10 +3,12 @@ const http = require("http");
 const path = require("path");
 
 const express = require("express");
+const multer = require("multer");
 const { SerialPort } = require("serialport");
 const { WebSocket, WebSocketServer } = require("ws");
 
 const ROOT = path.resolve(__dirname, "..");
+const EVIDENCE_DIR = path.join(ROOT, "evidence");
 
 function parseArgs(argv) {
   const config = {
@@ -14,7 +16,7 @@ function parseArgs(argv) {
     port: 3000,
     arduinoPort: null,
     baudRate: 9600,
-    threshold: 5,
+    eventSeconds: 2,
     confidence: 0.7,
     logPath: path.join(ROOT, "logs", "classifications.csv")
   };
@@ -34,8 +36,8 @@ function parseArgs(argv) {
     } else if (arg === "--baud-rate") {
       config.baudRate = Number(next);
       index += 1;
-    } else if (arg === "--threshold") {
-      config.threshold = Number(next);
+    } else if (arg === "--threshold" || arg === "--event-seconds") {
+      config.eventSeconds = Math.max(2, Number(next));
       index += 1;
     } else if (arg === "--confidence") {
       config.confidence = Number(next);
@@ -51,8 +53,8 @@ function parseArgs(argv) {
   if (!Number.isFinite(config.port) || config.port < 1) {
     throw new Error("--port must be a positive number");
   }
-  if (!Number.isFinite(config.threshold) || config.threshold < 1) {
-    throw new Error("--threshold must be at least 1");
+  if (!Number.isFinite(config.eventSeconds) || config.eventSeconds < 2) {
+    throw new Error("--event-seconds must be at least 2");
   }
   return config;
 }
@@ -157,28 +159,91 @@ function categoryForLabel(label, confidence, confidenceThreshold) {
 }
 
 class AlertState {
-  constructor(threshold, confidenceThreshold) {
-    this.threshold = threshold;
+  constructor(eventSeconds, confidenceThreshold) {
+    this.eventSeconds = eventSeconds;
     this.confidenceThreshold = confidenceThreshold;
     this.consecutiveRiskyFrames = 0;
+    this.currentAlertCategory = null;
+    this.currentAlertStartedAt = null;
   }
 
-  update(label, confidence) {
-    const category = categoryForLabel(label, confidence, this.confidenceThreshold);
-    const alertCategory = category === "Fail" || category === "Risky";
-    this.consecutiveRiskyFrames = alertCategory ? this.consecutiveRiskyFrames + 1 : 0;
-    const cheatingSuspected = alertCategory && this.consecutiveRiskyFrames >= this.threshold;
+  update(label, confidence, timestampMs = Date.now()) {
+    const candidateCategory = categoryForLabel(label, confidence, this.confidenceThreshold);
+    const alertCategory = candidateCategory === "Fail" || candidateCategory === "Risky";
+
+    if (!alertCategory) {
+      this.consecutiveRiskyFrames = 0;
+      this.currentAlertCategory = null;
+      this.currentAlertStartedAt = null;
+    } else if (this.currentAlertCategory !== candidateCategory) {
+      this.consecutiveRiskyFrames = 1;
+      this.currentAlertCategory = candidateCategory;
+      this.currentAlertStartedAt = timestampMs;
+    } else {
+      this.consecutiveRiskyFrames += 1;
+    }
+
+    const alertDurationSeconds =
+      alertCategory && this.currentAlertStartedAt !== null
+        ? (timestampMs - this.currentAlertStartedAt) / 1000
+        : 0;
+    const cheatingSuspected = alertCategory && alertDurationSeconds >= this.eventSeconds;
+    const confirmedCategory = cheatingSuspected ? candidateCategory : "All Clear";
+
     return {
-      category,
-      status: category,
+      category: confirmedCategory,
+      status: confirmedCategory,
       cheatingSuspected,
-      consecutiveRiskyFrames: this.consecutiveRiskyFrames
+      consecutiveRiskyFrames: this.consecutiveRiskyFrames,
+      pendingCategory: alertCategory ? candidateCategory : "All Clear",
+      alertDurationSeconds
     };
   }
 }
 
-function createApp(config) {
+function safeFilePart(value, fallback) {
+  const text = String(value || fallback)
+    .trim()
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return text || fallback;
+}
+
+function createEvidenceUpload() {
+  fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
+  const storage = multer.diskStorage({
+    destination: (_request, _file, callback) => {
+      callback(null, EVIDENCE_DIR);
+    },
+    filename: (request, file, callback) => {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const category = safeFilePart(request.body.category, "event");
+      const label = safeFilePart(request.body.label, "unknown");
+      const extension = path.extname(file.originalname) || ".webm";
+      callback(null, `evidence-${timestamp}-${category}-${label}${extension}`);
+    }
+  });
+
+  return multer({
+    storage,
+    limits: {
+      files: 1,
+      fileSize: 50 * 1024 * 1024
+    },
+    fileFilter: (_request, file, callback) => {
+      if (file.mimetype.startsWith("video/")) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("Evidence upload must be a video file"));
+    }
+  });
+}
+
+function createApp(config, onEvidence) {
   const app = express();
+  const upload = createEvidenceUpload();
   app.use((_request, response, next) => {
     response.setHeader("Cache-Control", "no-store");
     next();
@@ -186,6 +251,31 @@ function createApp(config) {
   app.use(express.json());
   app.use(express.static(path.join(ROOT, "public")));
   app.use("/model", express.static(path.join(ROOT, "model")));
+  app.use("/evidence", express.static(EVIDENCE_DIR));
+  app.post("/evidence", upload.single("video"), (request, response) => {
+    if (!request.file) {
+      response.status(400).json({ error: "Missing evidence video file" });
+      return;
+    }
+
+    const evidence = {
+      type: "evidence",
+      id: path.basename(request.file.filename, path.extname(request.file.filename)),
+      timestamp: request.body.timestamp || new Date().toISOString(),
+      received_at: new Date().toISOString(),
+      category: request.body.category || "Unknown",
+      status: request.body.status || request.body.category || "Unknown",
+      label: request.body.label || "Unknown",
+      confidence: Number(request.body.confidence || 0),
+      alert_duration_seconds: Number(request.body.alert_duration_seconds || 0),
+      video_url: `/evidence/${request.file.filename}`,
+      filename: request.file.filename,
+      size_bytes: request.file.size
+    };
+
+    onEvidence(evidence);
+    response.status(201).json(evidence);
+  });
   app.get("/vendor/tf.min.js", (_request, response) => {
     response.sendFile(path.join(ROOT, "node_modules", "@tensorflow", "tfjs", "dist", "tf.min.js"));
   });
@@ -208,6 +298,9 @@ function createApp(config) {
       confidenceThreshold: config.confidence
     });
   });
+  app.use((error, _request, response, _next) => {
+    response.status(400).json({ error: error.message || "Upload failed" });
+  });
   return app;
 }
 
@@ -224,9 +317,12 @@ function main() {
   const config = parseArgs(process.argv);
   const logger = new CsvLogger(config.logPath);
   const arduino = new ArduinoDisplay(config.arduinoPort, config.baudRate);
-  const alerts = new AlertState(config.threshold, config.confidence);
+  const alerts = new AlertState(config.eventSeconds, config.confidence);
 
-  const app = createApp(config);
+  const app = createApp(config, (evidence) => {
+    broadcast(wss.clients, evidence);
+    console.log(`Evidence uploaded: ${evidence.video_url}`);
+  });
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: "/status" });
   let latestStatus = null;
@@ -253,8 +349,9 @@ function main() {
 
       const label = String(event.label || "");
       const confidence = Number(event.confidence || 0);
-      const decision = alerts.update(label, confidence);
-      const timestamp = new Date().toISOString();
+      const timestampMs = Date.now();
+      const decision = alerts.update(label, confidence, timestampMs);
+      const timestamp = new Date(timestampMs).toISOString();
       latestStatus = {
         type: "status",
         timestamp,
@@ -264,6 +361,8 @@ function main() {
         label,
         confidence,
         consecutive_risky_frames: decision.consecutiveRiskyFrames,
+        alert_duration_seconds: Number(decision.alertDurationSeconds.toFixed(3)),
+        event_threshold_seconds: config.eventSeconds,
         predictions: Array.isArray(event.predictions) ? event.predictions : []
       };
 
@@ -279,7 +378,7 @@ function main() {
       broadcast(wss.clients, latestStatus);
       console.log(
         `${latestStatus.status}: ${label} (${(confidence * 100).toFixed(1)}%), ` +
-          `streak=${decision.consecutiveRiskyFrames}`
+          `pending=${decision.pendingCategory}, duration=${decision.alertDurationSeconds.toFixed(1)}s`
       );
     });
   });
@@ -287,6 +386,7 @@ function main() {
   server.listen(config.port, config.host, () => {
     console.log(`Backend listening on http://${config.host}:${config.port}`);
     console.log(`WebSocket status feed at ws://${config.host}:${config.port}/status`);
+    console.log(`Event threshold: ${config.eventSeconds.toFixed(1)} seconds`);
     console.log("Event mapping: Fail=Standing/Crotch/Nothing, Risky=Leaning Left/Leaning Right/Hand, All Clear=Normal");
   });
 }

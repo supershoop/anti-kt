@@ -98,6 +98,17 @@ h1 {
   gap: 8px;
 }
 
+.clips {
+  display: grid;
+  gap: 8px;
+}
+
+.clip a {
+  color: #2457c5;
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .prediction {
   display: flex;
   justify-content: space-between;

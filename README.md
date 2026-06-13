@@ -3,7 +3,7 @@
 Real-time exam room posture/behavior classifier backend.
 
 The Node backend serves the official Teachable Machine Pose classifier page,
-receives classification events over WebSocket, applies a consecutive-frame alert
+receives classification events over WebSocket, applies a sustained-event alert
 threshold, logs classifications, and sends status updates to an Arduino over
 serial.
 The Arduino sketch drives a 1602A LCD and rings a passive buzzer when cheating
@@ -70,7 +70,7 @@ On macOS it is usually something like `/dev/cu.usbmodem1101` or
 ```bash
 npm start -- \
   --arduino-port /dev/cu.usbmodem1101 \
-  --threshold 5 \
+  --event-seconds 2 \
   --confidence 0.7
 ```
 
@@ -88,13 +88,43 @@ Event categories are:
 - `Risky`: `Leaning Left`, `Leaning Right`, `Hand`
 - `All Clear`: `Normal`
 
-The LCD displays:
+The LCD and WebSocket status display:
 
-- `All clear` while the alert threshold is not met.
-- `Cheating suspected` once the model predicts a risky class for the configured
-  number of consecutive confident frames.
+- `All clear` while the event threshold is not met.
+- `Cheating suspected` once the model predicts `Fail` or `Risky` continuously
+  at 70% confidence or higher for at least 2 seconds.
 
 Classification logs are written to `logs/classifications.csv`.
+
+## Evidence clips
+
+The monitor page keeps a rolling 5-second video buffer in the browser. When a
+`Fail` or `Risky` event is confirmed by the backend for at least 2 seconds, it
+records the event timestamp and uploads an evidence clip with the previous 5
+seconds plus the next 5 seconds of video.
+
+Evidence clips are stored in `evidence/` and served from:
+
+```text
+http://127.0.0.1:3000/evidence/<filename>.webm
+```
+
+The upload endpoint is:
+
+```text
+POST /evidence
+Content-Type: multipart/form-data
+```
+
+Fields:
+
+- `video`: `.webm` video file.
+- `timestamp`: event timestamp.
+- `category`: confirmed category, `Fail` or `Risky`.
+- `status`: same as `category`.
+- `label`: raw top model label.
+- `confidence`: raw top model confidence.
+- `alert_duration_seconds`: sustained-event duration when the clip was created.
 
 ## WebSocket interface
 
@@ -116,12 +146,14 @@ Example message:
 ```json
 {
   "timestamp": "2026-06-13T14:30:12.123",
-  "status": "Risky",
-  "category": "Risky",
-  "cheating_suspected": true,
+  "status": "All Clear",
+  "category": "All Clear",
+  "cheating_suspected": false,
   "label": "Hand",
   "confidence": 0.938211,
   "consecutive_risky_frames": 5,
+  "alert_duration_seconds": 1.104,
+  "event_threshold_seconds": 2,
   "predictions": [
     { "label": "cheating", "confidence": 0.938211 }
   ],
@@ -133,13 +165,34 @@ Fields:
 
 - `type`: always `status`.
 - `timestamp`: local backend timestamp for the inference result.
-- `status`: display-ready event category, one of `Fail`, `Risky`, or `All Clear`.
+- `status`: confirmed display-ready event category, one of `Fail`, `Risky`, or `All Clear`.
 - `category`: same category value as `status`.
-- `cheating_suspected`: boolean alert state after applying the consecutive-frame threshold.
+- `cheating_suspected`: boolean alert state after applying the 70% confidence and sustained-event threshold.
 - `label`: raw top model label for the current frame.
 - `confidence`: model confidence for `label`.
 - `consecutive_risky_frames`: current risky-frame streak.
+- `alert_duration_seconds`: how long the current `Fail` or `Risky` category has been continuous.
+- `event_threshold_seconds`: configured event duration threshold.
 - `predictions`: all class probabilities sent by the classifier page.
+
+When a browser uploads an evidence clip, all WebSocket clients also receive:
+
+```json
+{
+  "type": "evidence",
+  "id": "evidence-2026-06-13T18-42-11-123Z-risky-hand",
+  "timestamp": "2026-06-13T18:42:06.000Z",
+  "received_at": "2026-06-13T18:42:11.123Z",
+  "category": "Risky",
+  "status": "Risky",
+  "label": "Hand",
+  "confidence": 0.938211,
+  "alert_duration_seconds": 2.104,
+  "video_url": "/evidence/evidence-2026-06-13T18-42-11-123Z-risky-hand.webm",
+  "filename": "evidence-2026-06-13T18-42-11-123Z-risky-hand.webm",
+  "size_bytes": 384000
+}
+```
 
 Minimal browser client:
 

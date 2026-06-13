@@ -4,14 +4,25 @@ const connectionEl = document.getElementById("connection");
 const topLabelEl = document.getElementById("top-label");
 const runtimeMessageEl = document.getElementById("runtime-message");
 const predictionsEl = document.getElementById("predictions");
+const clipsEl = document.getElementById("clips");
 const startButton = document.getElementById("start");
 
 const ctx = canvas.getContext("2d");
+const PRE_EVENT_SECONDS = 5;
+const POST_EVENT_SECONDS = 5;
+const RECORDER_TIMESLICE_MS = 1000;
+const CLIP_COOLDOWN_MS = 6000;
+
 let model;
 let webcam;
 let socket;
 let running = false;
 let frameErrorCount = 0;
+let mediaRecorder;
+let rollingChunks = [];
+let activeClip = null;
+let lastClipStartedAt = 0;
+const evidenceLinks = new Set();
 
 function setRuntimeMessage(message, isError = false) {
   runtimeMessageEl.textContent = message;
@@ -46,11 +57,15 @@ function connectSocket() {
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data);
     if (message.type !== "status") {
+      if (message.type === "evidence") {
+        addClipLink(message.video_url, message.filename, message);
+      }
       return;
     }
     const category = message.category || message.status;
     statusEl.textContent = category;
     statusEl.className = `status ${statusClassForCategory(category)}`;
+    maybeCaptureEventClip(message);
   });
 }
 
@@ -83,12 +98,171 @@ async function startCamera() {
   await webcam.play();
   canvas.width = width;
   canvas.height = height;
+  startVideoRecorder();
   running = true;
   frameErrorCount = 0;
   startButton.textContent = "Camera running";
   topLabelEl.textContent = "Classifying";
   setRuntimeMessage("Camera running");
   window.requestAnimationFrame(loop);
+}
+
+function startVideoRecorder() {
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    return;
+  }
+  if (!canvas.captureStream || !window.MediaRecorder) {
+    setRuntimeMessage("Video evidence recording is not supported by this browser", true);
+    return;
+  }
+
+  const stream = canvas.captureStream(24);
+  const options = preferredRecorderOptions();
+  mediaRecorder = new MediaRecorder(stream, options);
+  rollingChunks = [];
+  activeClip = null;
+
+  mediaRecorder.addEventListener("dataavailable", (event) => {
+    if (!event.data || event.data.size === 0) {
+      return;
+    }
+
+    const chunk = { blob: event.data, timestamp: Date.now() };
+    rollingChunks.push(chunk);
+    trimRollingChunks();
+
+    if (activeClip) {
+      activeClip.postChunks.push(chunk);
+    }
+  });
+  mediaRecorder.addEventListener("error", (event) => {
+    setRuntimeMessage(`Video recorder error: ${event.error?.message || "unknown error"}`, true);
+  });
+  mediaRecorder.start(RECORDER_TIMESLICE_MS);
+}
+
+function preferredRecorderOptions() {
+  const candidates = [
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8",
+    "video/webm"
+  ];
+  const mimeType = candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate));
+  return mimeType ? { mimeType } : {};
+}
+
+function trimRollingChunks() {
+  const cutoff = Date.now() - PRE_EVENT_SECONDS * 1000;
+  rollingChunks = rollingChunks.filter((chunk) => chunk.timestamp >= cutoff);
+}
+
+function maybeCaptureEventClip(status) {
+  const category = String(status.category || status.status || "").trim().toLowerCase();
+  if ((category !== "fail" && category !== "risky") || status.cheating_suspected !== true) {
+    return;
+  }
+  if (!mediaRecorder || mediaRecorder.state !== "recording") {
+    return;
+  }
+
+  const now = Date.now();
+  if (activeClip || now - lastClipStartedAt < CLIP_COOLDOWN_MS) {
+    return;
+  }
+
+  lastClipStartedAt = now;
+  activeClip = {
+    id: `${status.category}-${new Date(status.timestamp || now).toISOString()}`,
+    eventTimestamp: status.timestamp || new Date(now).toISOString(),
+    category: status.category || status.status,
+    label: status.label,
+    confidence: status.confidence,
+    alertDurationSeconds: status.alert_duration_seconds,
+    preChunks: [...rollingChunks],
+    postChunks: []
+  };
+  setRuntimeMessage(`Recording evidence clip for ${activeClip.category}`);
+
+  setTimeout(() => {
+    finalizeEventClip();
+  }, POST_EVENT_SECONDS * 1000);
+}
+
+async function finalizeEventClip() {
+  if (!activeClip) {
+    return;
+  }
+
+  const clip = activeClip;
+  activeClip = null;
+  const blobs = [...clip.preChunks, ...clip.postChunks].map((chunk) => chunk.blob);
+  if (blobs.length === 0) {
+    setRuntimeMessage("Evidence clip skipped: no video data available", true);
+    return;
+  }
+
+  const mimeType = mediaRecorder?.mimeType || "video/webm";
+  const blob = new Blob(blobs, { type: mimeType });
+  const filename = evidenceFilename(clip);
+  setRuntimeMessage(`Uploading evidence clip ${filename}`);
+
+  try {
+    const evidence = await uploadClip(blob, filename, clip);
+    addClipLink(evidence.video_url, evidence.filename, evidence);
+    setRuntimeMessage(`Uploaded evidence clip ${evidence.filename}`);
+  } catch (error) {
+    setRuntimeMessage(`Evidence upload failed: ${error.message}`, true);
+    console.error(error);
+  }
+}
+
+function evidenceFilename(clip) {
+  const safeCategory = String(clip.category).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+  const safeLabel = String(clip.label).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+  const safeTimestamp = new Date(clip.eventTimestamp).toISOString().replace(/[:.]/g, "-");
+  return `evidence-${safeTimestamp}-${safeCategory}-${safeLabel}.webm`;
+}
+
+async function uploadClip(blob, filename, clip) {
+  const form = new FormData();
+  form.append("timestamp", clip.eventTimestamp);
+  form.append("category", clip.category);
+  form.append("status", clip.category);
+  form.append("label", clip.label);
+  form.append("confidence", String(clip.confidence ?? 0));
+  form.append("alert_duration_seconds", String(clip.alertDurationSeconds ?? 0));
+  form.append("video", blob, filename);
+
+  const response = await fetch("/evidence", {
+    method: "POST",
+    body: form
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+function addClipLink(url, filename, clip) {
+  if (!url) {
+    return;
+  }
+  const key = clip.id || url;
+  if (evidenceLinks.has(key)) {
+    return;
+  }
+  evidenceLinks.add(key);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.textContent = `${clip.category} ${new Date(clip.timestamp || clip.eventTimestamp).toLocaleTimeString()}`;
+
+  const row = document.createElement("div");
+  row.className = "clip";
+  row.appendChild(link);
+  clipsEl.prepend(row);
 }
 
 async function loop() {
