@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.idea
+logs/*.csv
+models/*.tflite
+models/*.h5
+models/*.bin
+models/model.json
+models/metadata.json
+models/weights.bin

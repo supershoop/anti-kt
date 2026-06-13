@@ -1,0 +1,7 @@
+numpy>=1.24
+opencv-python>=4.8
+pyserial>=3.5
+
+# Install one of these model runtimes:
+# tensorflow>=2.13
+# tflite-runtime>=2.13
