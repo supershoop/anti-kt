@@ -3,24 +3,86 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>anti-kt monitor</title>
+    <title>Invigilation Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@125,700;125,800&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <main class="shell">
-      <section class="monitor">
-        <div class="video-wrap">
-          <canvas id="canvas" width="640" height="480"></canvas>
-          <div id="status" class="status clear">All clear</div>
+    <header>
+      <div class="session">
+        <h1 class="display"><b>Hall C</b> <span>/</span> Final Exam</h1>
+        <span class="sub">CS&nbsp;404 / PAPER&nbsp;2 / 13&nbsp;JUN&nbsp;2026</span>
+      </div>
+      <div class="summary">
+        <div class="tally"><b id="cTotal">1</b><em>Tracked</em></div>
+        <div class="tally safe"><i></i><b id="cSafe">1</b><em>Safe</em></div>
+        <div class="tally risky"><i></i><b id="cRisky">0</b><em>Risky</em></div>
+        <div class="tally fail zero" id="flagStat"><i></i><b id="cFail">0</b><em>Flagged</em></div>
+        <span class="live" id="liveBadge"><span class="blink"></span><span id="connection">Connecting</span></span>
+      </div>
+      <button id="modeBtn" class="mode-toggle" type="button" aria-label="Toggle light or dark mode">
+        <span data-mode="dark">Dark</span>
+        <span data-mode="light">Light</span>
+      </button>
+    </header>
+
+    <main>
+      <section class="monitor-grid">
+        <div class="video-panel">
+          <div class="video-wrap">
+            <canvas id="canvas" width="640" height="480"></canvas>
+            <div id="status" class="status-tag safe">All Clear</div>
+          </div>
+          <div class="control-row">
+            <button id="start" type="button">Start camera</button>
+            <div id="runtime-message" class="runtime-message">Ready</div>
+          </div>
         </div>
-        <aside class="panel">
-          <h1>Exam monitor</h1>
-          <div id="connection" class="connection">Connecting</div>
-          <div id="top-label" class="top-label">Waiting for camera</div>
-          <div id="runtime-message" class="runtime-message">Click Start camera</div>
-          <div id="predictions" class="predictions"></div>
-          <div id="clips" class="clips"></div>
-          <button id="start" type="button">Start camera</button>
+
+        <aside class="side-stack">
+          <article class="card safe" id="activeCard">
+            <div class="top">
+              <div>
+                <div class="name">Active feed</div>
+                <div class="sid" id="top-label">Waiting for camera</div>
+              </div>
+              <div class="seat">CAM-01</div>
+            </div>
+            <div class="card-status"><span id="cardStatus">Safe</span></div>
+            <div class="metrics">
+              <div class="conf">
+                <div class="v"><span id="confidenceValue">0</span><span class="pct">%</span></div>
+                <div class="k">Confidence</div>
+              </div>
+              <div class="updated">Alert<br /><span class="t" id="alertDuration">0.0s</span></div>
+            </div>
+            <div class="bar"><i id="confidenceBar" style="width: 0%"></i></div>
+            <div class="feed-meta">
+              <span>Frames <b id="frameStreak">0</b></span>
+              <span>Threshold <b id="eventThreshold">2.0s</b></span>
+            </div>
+          </article>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Predictions</h2>
+              <span id="clock">--:--:--</span>
+            </div>
+            <div id="predictions" class="predictions"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Evidence</h2>
+              <span id="clipCount">0 clips</span>
+            </div>
+            <div id="clips" class="clips"></div>
+          </section>
         </aside>
       </section>
     </main>

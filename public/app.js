@@ -1,17 +1,31 @@
 const canvas = document.getElementById("canvas");
 const statusEl = document.getElementById("status");
 const connectionEl = document.getElementById("connection");
+const liveBadgeEl = document.getElementById("liveBadge");
 const topLabelEl = document.getElementById("top-label");
 const runtimeMessageEl = document.getElementById("runtime-message");
 const predictionsEl = document.getElementById("predictions");
 const clipsEl = document.getElementById("clips");
 const startButton = document.getElementById("start");
+const modeButton = document.getElementById("modeBtn");
+const activeCardEl = document.getElementById("activeCard");
+const cardStatusEl = document.getElementById("cardStatus");
+const confidenceValueEl = document.getElementById("confidenceValue");
+const confidenceBarEl = document.getElementById("confidenceBar");
+const alertDurationEl = document.getElementById("alertDuration");
+const frameStreakEl = document.getElementById("frameStreak");
+const eventThresholdEl = document.getElementById("eventThreshold");
+const clipCountEl = document.getElementById("clipCount");
+const clockEl = document.getElementById("clock");
+const countSafeEl = document.getElementById("cSafe");
+const countRiskyEl = document.getElementById("cRisky");
+const countFailEl = document.getElementById("cFail");
+const flagStatEl = document.getElementById("flagStat");
 
 const ctx = canvas.getContext("2d");
 const PRE_EVENT_SECONDS = 5;
 const POST_EVENT_SECONDS = 5;
 const RECORDER_TIMESLICE_MS = 1000;
-const CLIP_COOLDOWN_MS = 6000;
 
 let model;
 let webcam;
@@ -21,8 +35,21 @@ let frameErrorCount = 0;
 let mediaRecorder;
 let rollingChunks = [];
 let activeClip = null;
-let lastClipStartedAt = 0;
+let currentConfirmedCategory = null;
+let clipCount = 0;
 const evidenceLinks = new Set();
+
+function applyTheme(theme) {
+  document.documentElement.classList.toggle("light", theme === "light");
+}
+
+let theme = localStorage.getItem("inv-theme") || "dark";
+applyTheme(theme);
+modeButton.addEventListener("click", () => {
+  theme = theme === "light" ? "dark" : "light";
+  applyTheme(theme);
+  localStorage.setItem("inv-theme", theme);
+});
 
 function setRuntimeMessage(message, isError = false) {
   runtimeMessageEl.textContent = message;
@@ -37,36 +64,125 @@ function statusClassForCategory(category) {
   if (normalized === "risky") {
     return "risky";
   }
-  return "clear";
+  return "safe";
+}
+
+function displayStatus(category) {
+  return statusClassForCategory(category) === "safe" ? "All Clear" : category;
 }
 
 function websocketURL() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/status`;
+  const host = window.location.host || "127.0.0.1:3000";
+  return `${protocol}//${host}/status`;
 }
 
 function connectSocket() {
   socket = new WebSocket(websocketURL());
   socket.addEventListener("open", () => {
-    connectionEl.textContent = "Connected";
+    connectionEl.textContent = "Live";
+    liveBadgeEl.classList.add("connected");
   });
   socket.addEventListener("close", () => {
-    connectionEl.textContent = "Disconnected";
+    connectionEl.textContent = "Offline";
+    liveBadgeEl.classList.remove("connected");
     setTimeout(connectSocket, 1000);
   });
+  socket.addEventListener("error", () => {
+    connectionEl.textContent = "Retrying";
+    liveBadgeEl.classList.remove("connected");
+  });
   socket.addEventListener("message", (event) => {
-    const message = JSON.parse(event.data);
-    if (message.type !== "status") {
-      if (message.type === "evidence") {
-        addClipLink(message.video_url, message.filename, message);
-      }
+    let message;
+    try {
+      message = JSON.parse(event.data);
+    } catch (error) {
+      setRuntimeMessage(`Status parse failed: ${error.message}`, true);
       return;
     }
-    const category = message.category || message.status;
-    statusEl.textContent = category;
-    statusEl.className = `status ${statusClassForCategory(category)}`;
-    maybeCaptureEventClip(message);
+
+    if (message.type === "status") {
+      applyStatusMessage(message);
+      maybeCaptureEventClip(message);
+    } else if (message.type === "evidence") {
+      addClipLink(message.video_url, message.filename, message);
+    }
   });
+}
+
+function applyStatusMessage(message) {
+  const category = message.category || message.status || "All Clear";
+  const statusClass = statusClassForCategory(category);
+  const display = displayStatus(category);
+  const confidencePercent = Math.max(0, Math.min(100, Number(message.confidence || 0) * 100));
+  const wasFail = activeCardEl.classList.contains("fail");
+
+  statusEl.textContent = display;
+  statusEl.className = `status-tag ${statusClass}`;
+
+  activeCardEl.classList.remove("safe", "risky", "fail", "flash");
+  activeCardEl.classList.add(statusClass);
+  cardStatusEl.textContent = statusClass === "safe" ? "Safe" : display;
+  topLabelEl.textContent = message.label
+    ? `${message.label} ${confidencePercent.toFixed(1)}%`
+    : "Waiting for classifier";
+  confidenceValueEl.textContent = Math.round(confidencePercent);
+  confidenceBarEl.style.width = `${confidencePercent.toFixed(1)}%`;
+  alertDurationEl.textContent = `${Number(message.alert_duration_seconds || 0).toFixed(1)}s`;
+  frameStreakEl.textContent = String(message.consecutive_risky_frames || 0);
+  eventThresholdEl.textContent = `${Number(message.event_threshold_seconds || 2).toFixed(1)}s`;
+
+  if (statusClass === "fail" && !wasFail) {
+    activeCardEl.classList.add("flash");
+  }
+
+  updateSummary(statusClass);
+  renderPredictions(message.predictions || []);
+}
+
+function updateSummary(statusClass) {
+  countSafeEl.textContent = statusClass === "safe" ? "1" : "0";
+  countRiskyEl.textContent = statusClass === "risky" ? "1" : "0";
+  countFailEl.textContent = statusClass === "fail" ? "1" : "0";
+  flagStatEl.classList.toggle("zero", statusClass !== "fail");
+}
+
+function renderPredictions(predictions) {
+  if (!predictions.length) {
+    predictionsEl.replaceChildren(emptyLine("No predictions yet"));
+    return;
+  }
+
+  predictionsEl.replaceChildren(
+    ...predictions.map((prediction) => {
+      const confidencePercent = Math.max(0, Math.min(100, Number(prediction.confidence || 0) * 100));
+      const row = document.createElement("div");
+      row.className = "prediction";
+
+      const label = document.createElement("span");
+      label.className = "prediction-label";
+      label.textContent = prediction.label || "Unknown";
+
+      const value = document.createElement("span");
+      value.textContent = `${confidencePercent.toFixed(1)}%`;
+
+      const track = document.createElement("div");
+      track.className = "prediction-track";
+      const fill = document.createElement("i");
+      fill.style.width = `${confidencePercent.toFixed(1)}%`;
+      track.appendChild(fill);
+
+      row.append(label, value, track);
+      return row;
+    })
+  );
+}
+
+function emptyLine(text) {
+  const row = document.createElement("div");
+  row.className = "prediction";
+  row.textContent = text;
+  return row;
 }
 
 async function loadModel() {
@@ -112,7 +228,7 @@ function startVideoRecorder() {
     return;
   }
   if (!canvas.captureStream || !window.MediaRecorder) {
-    setRuntimeMessage("Video evidence recording is not supported by this browser", true);
+    setRuntimeMessage("Evidence recording is not supported by this browser", true);
     return;
   }
 
@@ -142,11 +258,7 @@ function startVideoRecorder() {
 }
 
 function preferredRecorderOptions() {
-  const candidates = [
-    "video/webm;codecs=vp9",
-    "video/webm;codecs=vp8",
-    "video/webm"
-  ];
+  const candidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
   const mimeType = candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate));
   return mimeType ? { mimeType } : {};
 }
@@ -157,31 +269,33 @@ function trimRollingChunks() {
 }
 
 function maybeCaptureEventClip(status) {
-  const category = String(status.category || status.status || "").trim().toLowerCase();
-  if ((category !== "fail" && category !== "risky") || status.cheating_suspected !== true) {
+  const category = String(status.category || status.status || "").trim();
+  const normalized = category.toLowerCase();
+  const confirmedAlert =
+    status.cheating_suspected === true && (normalized === "fail" || normalized === "risky");
+
+  if (!confirmedAlert) {
+    currentConfirmedCategory = null;
+    return;
+  }
+  if (currentConfirmedCategory === normalized || activeClip) {
     return;
   }
   if (!mediaRecorder || mediaRecorder.state !== "recording") {
     return;
   }
 
-  const now = Date.now();
-  if (activeClip || now - lastClipStartedAt < CLIP_COOLDOWN_MS) {
-    return;
-  }
-
-  lastClipStartedAt = now;
+  currentConfirmedCategory = normalized;
   activeClip = {
-    id: `${status.category}-${new Date(status.timestamp || now).toISOString()}`,
-    eventTimestamp: status.timestamp || new Date(now).toISOString(),
-    category: status.category || status.status,
-    label: status.label,
+    eventTimestamp: status.timestamp || new Date().toISOString(),
+    category,
+    label: status.label || "Unknown",
     confidence: status.confidence,
     alertDurationSeconds: status.alert_duration_seconds,
     preChunks: [...rollingChunks],
     postChunks: []
   };
-  setRuntimeMessage(`Recording evidence clip for ${activeClip.category}`);
+  setRuntimeMessage(`Recording ${category} evidence clip`);
 
   setTimeout(() => {
     finalizeEventClip();
@@ -204,12 +318,12 @@ async function finalizeEventClip() {
   const mimeType = mediaRecorder?.mimeType || "video/webm";
   const blob = new Blob(blobs, { type: mimeType });
   const filename = evidenceFilename(clip);
-  setRuntimeMessage(`Uploading evidence clip ${filename}`);
+  setRuntimeMessage(`Uploading ${filename}`);
 
   try {
     const evidence = await uploadClip(blob, filename, clip);
     addClipLink(evidence.video_url, evidence.filename, evidence);
-    setRuntimeMessage(`Uploaded evidence clip ${evidence.filename}`);
+    setRuntimeMessage(`Uploaded ${evidence.filename}`);
   } catch (error) {
     setRuntimeMessage(`Evidence upload failed: ${error.message}`, true);
     console.error(error);
@@ -253,15 +367,23 @@ function addClipLink(url, filename, clip) {
     return;
   }
   evidenceLinks.add(key);
+  clipCount += 1;
+  clipCountEl.textContent = `${clipCount} ${clipCount === 1 ? "clip" : "clips"}`;
 
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
-  link.textContent = `${clip.category} ${new Date(clip.timestamp || clip.eventTimestamp).toLocaleTimeString()}`;
+  link.textContent = filename || url;
+
+  const meta = document.createElement("span");
+  const timestamp = clip.timestamp || clip.eventTimestamp || clip.received_at;
+  const time = timestamp ? new Date(timestamp).toLocaleTimeString() : "saved";
+  const confidence = Number(clip.confidence || 0) * 100;
+  meta.textContent = `${clip.category || "Event"} / ${confidence.toFixed(1)}% / ${time}`;
 
   const row = document.createElement("div");
   row.className = "clip";
-  row.appendChild(link);
+  row.append(link, meta);
   clipsEl.prepend(row);
 }
 
@@ -296,15 +418,11 @@ async function predict() {
 
   drawPose(pose);
   topLabelEl.textContent = `${top.className} ${(top.probability * 100).toFixed(1)}%`;
-  predictionsEl.replaceChildren(
-    ...predictions.map((prediction) => {
-      const row = document.createElement("div");
-      row.className = "prediction";
-      row.innerHTML = `<span>${prediction.className}</span><span>${(
-        prediction.probability * 100
-      ).toFixed(1)}%</span>`;
-      return row;
-    })
+  renderPredictions(
+    predictions.map((prediction) => ({
+      label: prediction.className,
+      confidence: prediction.probability
+    }))
   );
 
   if (socket && socket.readyState === WebSocket.OPEN) {
@@ -331,12 +449,20 @@ function drawPose(pose) {
   tmPose.drawSkeleton(pose.keypoints, 0.5, ctx);
 }
 
+function updateClock() {
+  const now = new Date();
+  clockEl.textContent = now.toLocaleTimeString();
+}
+
+renderPredictions([]);
+updateClock();
+setInterval(updateClock, 1000);
 connectSocket();
 startButton.addEventListener("click", () => {
   startCamera().catch((error) => {
     startButton.disabled = false;
     startButton.textContent = "Start camera";
-    connectionEl.textContent = error.message;
+    connectionEl.textContent = "Error";
     topLabelEl.textContent = "Camera not running";
     setRuntimeMessage(error.message, true);
     console.error(error);
