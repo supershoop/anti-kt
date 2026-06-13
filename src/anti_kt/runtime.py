@@ -19,7 +19,7 @@ class RuntimeConfig:
     labels_path: Path | None
     arduino_port: str
     camera_index: int = 0
-    cheating_labels: frozenset[str] = frozenset({"Standing", "Phone", "Croutch", "suspicious"})
+    cheating_labels: frozenset[str] = frozenset({"Standing", "Crotch"})
     consecutive_threshold: int = 5
     confidence_threshold: float = 0.7
     interval_seconds: float = 0.2

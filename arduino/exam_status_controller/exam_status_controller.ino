@@ -63,5 +63,6 @@ void loop() {
     lastBeepMs = millis();
   }
   digitalWrite(GREEN, cheatingSuspected ? LOW : HIGH);
-    digitalWrite(RED, cheatingSuspected ? ((((millis()-lastBeepMs) / 350) % 2 == 1) ? LOW : HIGH) : LOW);
+  digitalWrite(RED, cheatingSuspected ? ((((millis()-lastBeepMs) / 350) % 2 == 1) ? LOW : HIGH) : LOW);
+  Serial.write("Ping");
 }

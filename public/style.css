@@ -1,0 +1,127 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f4f5f7;
+  color: #181b20;
+}
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.monitor {
+  width: min(1120px, 100%);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+  align-items: start;
+}
+
+.video-wrap {
+  position: relative;
+  background: #101318;
+  border: 1px solid #d7dbe2;
+  border-radius: 8px;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.status {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.status.clear {
+  background: #147a4d;
+}
+
+.status.risky {
+  background: #9a5b00;
+}
+
+.status.fail {
+  background: #b42318;
+}
+
+.panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  background: #fff;
+  border: 1px solid #d7dbe2;
+  border-radius: 8px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.connection,
+.top-label,
+.runtime-message {
+  padding: 10px 0;
+  border-bottom: 1px solid #ebeef3;
+}
+
+.runtime-message {
+  color: #4d5b6c;
+  font-size: 14px;
+}
+
+.runtime-message.error {
+  color: #b42318;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.predictions {
+  display: grid;
+  gap: 8px;
+}
+
+.prediction {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
+button {
+  height: 40px;
+  border: 0;
+  border-radius: 6px;
+  background: #2457c5;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #8591a5;
+  cursor: default;
+}
+
+@media (max-width: 820px) {
+  .monitor {
+    grid-template-columns: 1fr;
+  }
+}

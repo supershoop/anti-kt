@@ -1,13 +1,17 @@
 {
-  "name": "anti-kt-pose-preprocessor",
+  "name": "anti-kt",
   "private": true,
   "version": "0.1.0",
-  "description": "PoseNet preprocessing sidecar for the anti-kt Python backend.",
+  "description": "Node backend for Teachable Machine exam posture classification.",
   "scripts": {
-    "check:pose": "node scripts/posenet_features.js --check"
+    "start": "node backend/server.js",
+    "check": "node --check backend/server.js && node --check public/app.js"
   },
   "dependencies": {
-    "@tensorflow-models/posenet": "2.2.2",
-    "@tensorflow/tfjs": "3.21.0"
+    "@teachablemachine/pose": "0.8.6",
+    "@tensorflow/tfjs": "1.3.1",
+    "express": "^4.19.2",
+    "serialport": "^12.0.0",
+    "ws": "^8.17.1"
   }
 }
