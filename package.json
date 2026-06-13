@@ -1,0 +1,13 @@
+{
+  "name": "anti-kt-pose-preprocessor",
+  "private": true,
+  "version": "0.1.0",
+  "description": "PoseNet preprocessing sidecar for the anti-kt Python backend.",
+  "scripts": {
+    "check:pose": "node scripts/posenet_features.js --check"
+  },
+  "dependencies": {
+    "@tensorflow-models/posenet": "2.2.2",
+    "@tensorflow/tfjs": "3.21.0"
+  }
+}

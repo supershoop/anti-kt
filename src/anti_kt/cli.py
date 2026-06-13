@@ -8,8 +8,13 @@ from anti_kt.runtime import ExamRoomClassifier, RuntimeConfig
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the anti-kt exam room classifier")
-    parser.add_argument("--model", type=Path, required=True, help="Path to the exported .tflite model")
-    parser.add_argument("--labels", type=Path, required=True, help="Path to labels.txt")
+    parser.add_argument("--model", type=Path, required=True, help="Path to the exported .h5, .keras, or .tflite model")
+    parser.add_argument(
+        "--labels",
+        type=Path,
+        default=None,
+        help="Path to labels.txt. Optional for .h5 models with sibling metadata.json.",
+    )
     parser.add_argument("--arduino-port", required=True, help="Serial port, for example /dev/cu.usbmodem1101")
     parser.add_argument("--camera-index", type=int, default=0, help="OpenCV camera index")
     parser.add_argument("--threshold", type=int, default=5, help="Consecutive risky frames before alerting")

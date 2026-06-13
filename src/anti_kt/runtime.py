@@ -9,17 +9,17 @@ from anti_kt.alert import ConsecutiveFrameAlert
 from anti_kt.arduino import ArduinoConfig, ArduinoStatusDisplay
 from anti_kt.camera import CameraFrameSource
 from anti_kt.logger import ClassificationRecord, CsvClassificationLogger
-from anti_kt.model import TFLiteImageClassifier
+from anti_kt.model import load_image_classifier
 from anti_kt.websocket_status import StatusEvent, WebSocketStatusServer
 
 
 @dataclass(frozen=True)
 class RuntimeConfig:
     model_path: Path
-    labels_path: Path
+    labels_path: Path | None
     arduino_port: str
     camera_index: int = 0
-    cheating_labels: frozenset[str] = frozenset({"cheating", "looking away", "phone", "suspicious"})
+    cheating_labels: frozenset[str] = frozenset({"Standing", "Phone", "Croutch", "suspicious"})
     consecutive_threshold: int = 5
     confidence_threshold: float = 0.7
     interval_seconds: float = 0.2
@@ -31,7 +31,7 @@ class RuntimeConfig:
 class ExamRoomClassifier:
     def __init__(self, config: RuntimeConfig) -> None:
         self.config = config
-        self.classifier = TFLiteImageClassifier(config.model_path, config.labels_path)
+        self.classifier = load_image_classifier(config.model_path, config.labels_path)
         self.alerts = ConsecutiveFrameAlert(set(config.cheating_labels), config.consecutive_threshold)
 
     def run(self) -> None:

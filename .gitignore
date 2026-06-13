@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .idea
+node_modules/
 logs/*.csv
 models/*.tflite
 models/*.h5

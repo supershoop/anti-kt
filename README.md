@@ -32,25 +32,33 @@ Default LCD pin mapping in `arduino/exam_status_controller/exam_status_controlle
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-pip install tensorflow
+npm install
 ```
 
-If you prefer the smaller runtime, install `tflite-runtime` instead of
-`tensorflow` when it is available for your platform.
+TensorFlow is required for Keras `.h5` / `.keras` models. If you use a TFLite
+model instead, you can install `tflite-runtime` where it is available.
+`npm install` installs the small PoseNet sidecar used when a Teachable Machine
+pose model has a flat 14,739-value input.
 
 ## Model files
 
-Export your Teachable Machine image model as TensorFlow Lite and place the files
-under `models/`, for example:
+Place your model files under `model/`, for example:
 
 ```text
-models/model.tflite
-models/labels.txt
+model/model.h5
+model/metadata.json
 ```
 
-The Python runtime directly supports `.tflite`. If you exported TF.js instead,
-convert it to TFLite or export the TFLite version from Teachable Machine before
-running this backend.
+The Python runtime supports Keras `.h5`, Keras `.keras`, and TFLite `.tflite`
+models. For `.h5` / `.keras`, labels are loaded from `--labels` when provided,
+then from a sibling `labels.txt`, then from a sibling Teachable Machine
+`metadata.json`.
+
+Teachable Machine pose models are supported through a PoseNet preprocessing
+sidecar. The backend mirrors the Teachable Machine pose preprocessing: pad and
+resize the frame, extract PoseNet heatmaps and offsets, concatenate them on the
+channel axis, flatten to the 14,739-value vector expected by the `.h5`
+classifier, and then run the Keras model.
 
 ## Arduino setup
 
@@ -70,8 +78,7 @@ On macOS it is usually something like `/dev/cu.usbmodem1101` or
 
 ```bash
 PYTHONPATH=src python -m anti_kt.cli \
-  --model models/model.tflite \
-  --labels models/labels.txt \
+  --model model/model.h5 \
   --arduino-port /dev/cu.usbmodem1101 \
   --camera-index 0 \
   --threshold 5 \
