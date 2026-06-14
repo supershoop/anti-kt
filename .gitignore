@@ -11,3 +11,4 @@ models/*.bin
 models/model.json
 models/metadata.json
 models/weights.bin
+evidence/

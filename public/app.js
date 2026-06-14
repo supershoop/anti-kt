@@ -34,6 +34,7 @@ let running = false;
 let frameErrorCount = 0;
 let mediaRecorder;
 let rollingChunks = [];
+let recorderHeaderChunk = null;
 let activeClip = null;
 let currentConfirmedCategory = null;
 let evidenceUploadURL = null;
@@ -254,6 +255,7 @@ function startVideoRecorder() {
   const options = preferredRecorderOptions();
   mediaRecorder = new MediaRecorder(stream, options);
   rollingChunks = [];
+  recorderHeaderChunk = null;
   activeClip = null;
 
   mediaRecorder.addEventListener("dataavailable", (event) => {
@@ -261,7 +263,11 @@ function startVideoRecorder() {
       return;
     }
 
-    const chunk = { blob: event.data, timestamp: Date.now() };
+    const isHeader = recorderHeaderChunk === null;
+    const chunk = { blob: event.data, timestamp: Date.now(), isHeader };
+    if (isHeader) {
+      recorderHeaderChunk = chunk;
+    }
     rollingChunks.push(chunk);
     trimRollingChunks();
 
@@ -313,13 +319,57 @@ function maybeCaptureEventClip(status) {
     confidence: status.confidence,
     alertDurationSeconds: status.alert_duration_seconds,
     preChunks: [...rollingChunks],
-    postChunks: []
+    postChunks: [],
+    evidenceChunks: [],
+    evidenceRecorder: null
   };
+  if (!startEvidenceRecorder(activeClip)) {
+    activeClip = null;
+    setRuntimeMessage("Evidence clip skipped: recorder unavailable", true);
+    return;
+  }
   setRuntimeMessage(`Recording ${category} evidence clip`);
 
   setTimeout(() => {
     finalizeEventClip();
   }, POST_EVENT_SECONDS * 1000);
+}
+
+function startEvidenceRecorder(clip) {
+  if (!canvas.captureStream || !window.MediaRecorder) {
+    return false;
+  }
+
+  const recorder = new MediaRecorder(canvas.captureStream(24), preferredRecorderOptions());
+  clip.evidenceRecorder = recorder;
+  recorder.addEventListener("dataavailable", (event) => {
+    if (event.data && event.data.size > 0) {
+      clip.evidenceChunks.push(event.data);
+    }
+  });
+  recorder.addEventListener("error", (event) => {
+    setRuntimeMessage(`Evidence recorder error: ${event.error?.message || "unknown error"}`, true);
+  });
+  recorder.start();
+  return true;
+}
+
+function stopEvidenceRecorder(clip) {
+  return new Promise((resolve) => {
+    const recorder = clip.evidenceRecorder;
+    if (!recorder || recorder.state === "inactive") {
+      resolve(clip.evidenceChunks);
+      return;
+    }
+
+    recorder.addEventListener("stop", () => resolve(clip.evidenceChunks), { once: true });
+    try {
+      recorder.requestData();
+    } catch (_) {
+      // Some browsers throw if no data is ready yet; stop still emits the final blob.
+    }
+    recorder.stop();
+  });
 }
 
 async function finalizeEventClip() {
@@ -329,7 +379,7 @@ async function finalizeEventClip() {
 
   const clip = activeClip;
   activeClip = null;
-  const blobs = [...clip.preChunks, ...clip.postChunks].map((chunk) => chunk.blob);
+  const blobs = await stopEvidenceRecorder(clip);
   if (blobs.length === 0) {
     setRuntimeMessage("Evidence clip skipped: no video data available", true);
     return;
