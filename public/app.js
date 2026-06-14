@@ -25,18 +25,22 @@ const studentDisplayEl = document.getElementById("studentDisplay");
 const ctx = canvas.getContext("2d");
 const PRE_EVENT_SECONDS = 5;
 const POST_EVENT_SECONDS = 5;
-const RECORDER_TIMESLICE_MS = 1000;
+const EVIDENCE_FPS = 10;
+const EVIDENCE_FRAME_INTERVAL_MS = 1000 / EVIDENCE_FPS;
+const EVIDENCE_JPEG_QUALITY = 0.78;
 
 let model;
 let webcam;
 let socket;
 let running = false;
 let frameErrorCount = 0;
-let mediaRecorder;
-let rollingChunks = [];
-let recorderHeaderChunk = null;
+let rollingFrames = [];
+let retainedFrames = new Set();
+let lastBufferedFrameAt = 0;
+let bufferFramePending = false;
 let activeClip = null;
 let currentConfirmedCategory = null;
+let evidenceCapturedForCurrentEvent = false;
 let evidenceUploadURL = null;
 let dashboardConnected = false;
 
@@ -243,53 +247,55 @@ async function startCamera() {
 }
 
 function startVideoRecorder() {
-  if (mediaRecorder && mediaRecorder.state !== "inactive") {
-    return;
-  }
-  if (!canvas.captureStream || !window.MediaRecorder) {
-    setRuntimeMessage("Evidence recording is not supported by this browser", true);
-    return;
-  }
-
-  const stream = canvas.captureStream(24);
-  const options = preferredRecorderOptions();
-  mediaRecorder = new MediaRecorder(stream, options);
-  rollingChunks = [];
-  recorderHeaderChunk = null;
+  rollingFrames.forEach(closeFrame);
+  retainedFrames = new Set();
+  rollingFrames = [];
+  lastBufferedFrameAt = 0;
+  bufferFramePending = false;
   activeClip = null;
-
-  mediaRecorder.addEventListener("dataavailable", (event) => {
-    if (!event.data || event.data.size === 0) {
-      return;
-    }
-
-    const isHeader = recorderHeaderChunk === null;
-    const chunk = { blob: event.data, timestamp: Date.now(), isHeader };
-    if (isHeader) {
-      recorderHeaderChunk = chunk;
-    }
-    rollingChunks.push(chunk);
-    trimRollingChunks();
-
-    if (activeClip) {
-      activeClip.postChunks.push(chunk);
-    }
-  });
-  mediaRecorder.addEventListener("error", (event) => {
-    setRuntimeMessage(`Video recorder error: ${event.error?.message || "unknown error"}`, true);
-  });
-  mediaRecorder.start(RECORDER_TIMESLICE_MS);
+  currentConfirmedCategory = null;
+  evidenceCapturedForCurrentEvent = false;
 }
 
-function preferredRecorderOptions() {
-  const candidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
-  const mimeType = candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate));
-  return mimeType ? { mimeType } : {};
+function trimRollingFrames() {
+  const cutoff = performance.now() - PRE_EVENT_SECONDS * 1000;
+  const keep = [];
+  for (const frame of rollingFrames) {
+    if (frame.timestamp >= cutoff || retainedFrames.has(frame)) {
+      keep.push(frame);
+    } else {
+      closeFrame(frame);
+    }
+  }
+  rollingFrames = keep;
 }
 
-function trimRollingChunks() {
-  const cutoff = Date.now() - PRE_EVENT_SECONDS * 1000;
-  rollingChunks = rollingChunks.filter((chunk) => chunk.timestamp >= cutoff);
+function closeFrame(frame) {
+  try {
+    frame.bitmap?.close?.();
+  } catch (_) {
+    // ImageBitmap.close is a best-effort resource hint.
+  }
+}
+
+function bufferEvidenceFrame() {
+  const now = performance.now();
+  if (bufferFramePending || now - lastBufferedFrameAt < EVIDENCE_FRAME_INTERVAL_MS) {
+    return;
+  }
+  bufferFramePending = true;
+  lastBufferedFrameAt = now;
+  createImageBitmap(canvas)
+    .then((bitmap) => {
+      rollingFrames.push({ bitmap, timestamp: now });
+      trimRollingFrames();
+    })
+    .catch((error) => {
+      setRuntimeMessage(`Evidence frame buffer failed: ${error.message}`, true);
+    })
+    .finally(() => {
+      bufferFramePending = false;
+    });
 }
 
 function maybeCaptureEventClip(status) {
@@ -301,97 +307,159 @@ function maybeCaptureEventClip(status) {
 
   if (!confirmedAlert) {
     currentConfirmedCategory = null;
+    evidenceCapturedForCurrentEvent = false;
     return;
   }
-  if (currentConfirmedCategory === normalized || activeClip) {
+  if (evidenceCapturedForCurrentEvent || activeClip) {
     return;
   }
-  if (!mediaRecorder || mediaRecorder.state !== "recording") {
-    return;
-  }
-
   currentConfirmedCategory = normalized;
+  evidenceCapturedForCurrentEvent = true;
+  const preFrames = rollingFrames.filter(
+    (frame) => frame.timestamp >= performance.now() - PRE_EVENT_SECONDS * 1000
+  );
+  preFrames.forEach((frame) => retainedFrames.add(frame));
   activeClip = {
     eventTimestamp: status.timestamp || new Date().toISOString(),
+    eventTimeMs: performance.now(),
     studentName: status.student_name || studentName(),
     category,
     label: status.label || "Unknown",
     confidence: status.confidence,
     alertDurationSeconds: status.alert_duration_seconds,
-    preChunks: [...rollingChunks],
-    postChunks: [],
-    evidenceChunks: [],
-    evidenceRecorder: null
+    preFrames,
+    postFrames: []
   };
-  if (!startEvidenceRecorder(activeClip)) {
-    activeClip = null;
-    setRuntimeMessage("Evidence clip skipped: recorder unavailable", true);
-    return;
-  }
   setRuntimeMessage(`Recording ${category} evidence clip`);
-
-  setTimeout(() => {
-    finalizeEventClip();
-  }, POST_EVENT_SECONDS * 1000);
-}
-
-function startEvidenceRecorder(clip) {
-  if (!canvas.captureStream || !window.MediaRecorder) {
-    return false;
-  }
-
-  const recorder = new MediaRecorder(canvas.captureStream(24), preferredRecorderOptions());
-  clip.evidenceRecorder = recorder;
-  recorder.addEventListener("dataavailable", (event) => {
-    if (event.data && event.data.size > 0) {
-      clip.evidenceChunks.push(event.data);
-    }
-  });
-  recorder.addEventListener("error", (event) => {
-    setRuntimeMessage(`Evidence recorder error: ${event.error?.message || "unknown error"}`, true);
-  });
-  recorder.start();
-  return true;
-}
-
-function stopEvidenceRecorder(clip) {
-  return new Promise((resolve) => {
-    const recorder = clip.evidenceRecorder;
-    if (!recorder || recorder.state === "inactive") {
-      resolve(clip.evidenceChunks);
-      return;
-    }
-
-    recorder.addEventListener("stop", () => resolve(clip.evidenceChunks), { once: true });
-    try {
-      recorder.requestData();
-    } catch (_) {
-      // Some browsers throw if no data is ready yet; stop still emits the final blob.
-    }
-    recorder.stop();
-  });
-}
-
-async function finalizeEventClip() {
-  if (!activeClip) {
-    return;
-  }
-
   const clip = activeClip;
-  activeClip = null;
-  const blobs = await stopEvidenceRecorder(clip);
-  if (blobs.length === 0) {
-    setRuntimeMessage("Evidence clip skipped: no video data available", true);
+  recordEventClip(clip).catch((error) => {
+    clipCleanup(clip);
+    if (activeClip === clip) {
+      activeClip = null;
+    }
+    currentConfirmedCategory = null;
+    evidenceCapturedForCurrentEvent = false;
+    setRuntimeMessage(`Evidence recording failed: ${error.message}`, true);
+    console.error(error);
+  });
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function frameAtTime(frames, targetTime) {
+  if (!frames.length) {
+    return null;
+  }
+  let selected = frames[0];
+  for (const frame of frames) {
+    if (frame.timestamp > targetTime) {
+      break;
+    }
+    selected = frame;
+  }
+  return selected;
+}
+
+async function collectPostEventFrames(clip) {
+  const startedAt = performance.now();
+  const durationMs = POST_EVENT_SECONDS * 1000;
+  while (performance.now() - startedAt < durationMs) {
+    await wait(EVIDENCE_FRAME_INTERVAL_MS);
+  }
+  const postEndTime = clip.eventTimeMs + durationMs;
+  clip.postFrames = rollingFrames.filter(
+    (frame) => frame.timestamp >= clip.eventTimeMs && frame.timestamp <= postEndTime
+  );
+  clip.postFrames.forEach((frame) => retainedFrames.add(frame));
+}
+
+function clipCleanup(clip) {
+  if (!clip) {
+    return;
+  }
+  clip.preFrames.forEach((frame) => retainedFrames.delete(frame));
+  clip.postFrames.forEach((frame) => retainedFrames.delete(frame));
+  trimRollingFrames();
+}
+
+async function recordEventClip(clip) {
+  await collectPostEventFrames(clip);
+  try {
+    await uploadFrameEvidence(clip);
+  } finally {
+    clipCleanup(clip);
+    if (activeClip === clip) {
+      activeClip = null;
+    }
+  }
+}
+
+function orderedEvidenceFrames(clip) {
+  const frames = [];
+  const preStart = clip.eventTimeMs - PRE_EVENT_SECONDS * 1000;
+  for (let offset = 0; offset < PRE_EVENT_SECONDS * 1000; offset += EVIDENCE_FRAME_INTERVAL_MS) {
+    frames.push(frameAtTime(clip.preFrames, preStart + offset));
+  }
+  for (let offset = 0; offset < POST_EVENT_SECONDS * 1000; offset += EVIDENCE_FRAME_INTERVAL_MS) {
+    frames.push(frameAtTime(clip.postFrames, clip.eventTimeMs + offset));
+  }
+  return frames.filter(Boolean);
+}
+
+function frameToJpeg(frame, encoderCanvas, encoderCtx) {
+  return new Promise((resolve) => {
+    encoderCtx.drawImage(frame.bitmap, 0, 0, encoderCanvas.width, encoderCanvas.height);
+    encoderCanvas.toBlob(resolve, "image/jpeg", EVIDENCE_JPEG_QUALITY);
+  });
+}
+
+async function uploadFrameEvidence(clip) {
+  const frames = orderedEvidenceFrames(clip);
+  if (frames.length < EVIDENCE_FPS) {
+    setRuntimeMessage(`Evidence clip skipped: only ${frames.length} frames available`, true);
     return;
   }
 
-  const mimeType = mediaRecorder?.mimeType || "video/webm";
-  const blob = new Blob(blobs, { type: mimeType });
   const filename = evidenceFilename(clip);
+  const uploadURL = evidenceUploadURL || "/evidence";
+  const form = new FormData();
+  const encoderCanvas = document.createElement("canvas");
+  encoderCanvas.width = canvas.width;
+  encoderCanvas.height = canvas.height;
+  const encoderCtx = encoderCanvas.getContext("2d");
+
+  form.append("timestamp", clip.eventTimestamp);
+  form.append("student_name", clip.studentName || studentName());
+  form.append("category", clip.category);
+  form.append("status", clip.category);
+  form.append("label", clip.label);
+  form.append("confidence", String(clip.confidence ?? 0));
+  form.append("alert_duration_seconds", String(clip.alertDurationSeconds ?? 0));
+  form.append("frame_rate", String(EVIDENCE_FPS));
+  form.append("filename", filename);
+
+  for (let index = 0; index < frames.length; index += 1) {
+    const jpeg = await frameToJpeg(frames[index], encoderCanvas, encoderCtx);
+    if (jpeg) {
+      form.append("frames", jpeg, `frame-${String(index + 1).padStart(4, "0")}.jpg`);
+    }
+  }
+
   setRuntimeMessage(`Uploading ${filename}`);
 
   try {
-    const evidence = await uploadClip(blob, filename, clip);
+    const response = await fetch(uploadURL, {
+      method: "POST",
+      body: form
+    });
+    const evidence = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(evidence.error || `HTTP ${response.status}`);
+    }
     setRuntimeMessage(`Uploaded ${evidence.filename || evidence.id || filename}`);
   } catch (error) {
     setRuntimeMessage(`Evidence upload failed: ${error.message}`, true);
@@ -407,29 +475,6 @@ function evidenceFilename(clip) {
   const safeLabel = String(clip.label).replace(/[^a-z0-9]+/gi, "-").toLowerCase();
   const safeTimestamp = new Date(clip.eventTimestamp).toISOString().replace(/[:.]/g, "-");
   return `evidence-${safeTimestamp}-${safeStudent}-${safeCategory}-${safeLabel}.webm`;
-}
-
-async function uploadClip(blob, filename, clip) {
-  const uploadURL = evidenceUploadURL || "/evidence";
-  const form = new FormData();
-  form.append("timestamp", clip.eventTimestamp);
-  form.append("student_name", clip.studentName || studentName());
-  form.append("category", clip.category);
-  form.append("status", clip.category);
-  form.append("label", clip.label);
-  form.append("confidence", String(clip.confidence ?? 0));
-  form.append("alert_duration_seconds", String(clip.alertDurationSeconds ?? 0));
-  form.append("video", blob, filename);
-
-  const response = await fetch(uploadURL, {
-    method: "POST",
-    body: form
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.error || `HTTP ${response.status}`);
-  }
-  return payload;
 }
 
 async function loop() {
@@ -489,10 +534,12 @@ async function predict() {
 function drawPose(pose) {
   ctx.drawImage(webcam.canvas, 0, 0);
   if (!pose) {
+    bufferEvidenceFrame();
     return;
   }
   tmPose.drawKeypoints(pose.keypoints, 0.5, ctx);
   tmPose.drawSkeleton(pose.keypoints, 0.5, ctx);
+  bufferEvidenceFrame();
 }
 
 function updateClock() {

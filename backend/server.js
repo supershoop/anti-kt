@@ -1,6 +1,8 @@
 const fs = require("fs");
 const http = require("http");
+const os = require("os");
 const path = require("path");
+const { execFile } = require("child_process");
 
 const express = require("express");
 const multer = require("multer");
@@ -234,34 +236,97 @@ function safeFilePart(value, fallback) {
 
 function createEvidenceUpload() {
   fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
-  const storage = multer.diskStorage({
-    destination: (_request, _file, callback) => {
-      callback(null, EVIDENCE_DIR);
-    },
-    filename: (request, file, callback) => {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const student = safeFilePart(request.body.student_name, "unknown-student");
-      const category = safeFilePart(request.body.category, "event");
-      const label = safeFilePart(request.body.label, "unknown");
-      const extension = path.extname(file.originalname) || ".webm";
-      callback(null, `evidence-${timestamp}-${student}-${category}-${label}${extension}`);
-    }
-  });
 
   return multer({
-    storage,
+    storage: multer.memoryStorage(),
     limits: {
-      files: 1,
-      fileSize: 50 * 1024 * 1024
+      files: 400,
+      fileSize: 3 * 1024 * 1024
     },
     fileFilter: (_request, file, callback) => {
-      if (file.mimetype.startsWith("video/")) {
+      if (
+        (file.fieldname === "video" && file.mimetype.startsWith("video/")) ||
+        (file.fieldname === "frames" && file.mimetype === "image/jpeg")
+      ) {
         callback(null, true);
         return;
       }
-      callback(new Error("Evidence upload must be a video file"));
+      callback(new Error("Evidence upload must include a video file or JPEG frames"));
     }
   });
+}
+
+function evidenceFilename(request) {
+  const requested = String(request.body.filename || "").trim();
+  if (requested) {
+    return `${safeFilePart(path.basename(requested, path.extname(requested)), "evidence")}.webm`;
+  }
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const student = safeFilePart(request.body.student_name, "unknown-student");
+  const category = safeFilePart(request.body.category || request.body.status, "event");
+  const label = safeFilePart(request.body.label, "unknown");
+  return `evidence-${timestamp}-${student}-${category}-${label}.webm`;
+}
+
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    execFile("ffmpeg", args, { timeout: 30000 }, (error, _stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr || error.message));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+async function writeEvidenceFileFromUpload(request) {
+  const files = Array.isArray(request.files) ? request.files : [];
+  const video = files.find((file) => file.fieldname === "video");
+  const frames = files
+    .filter((file) => file.fieldname === "frames")
+    .sort((a, b) => a.originalname.localeCompare(b.originalname));
+  const filename = evidenceFilename(request);
+  const outputPath = path.join(EVIDENCE_DIR, filename);
+  const tempOutputPath = path.join(EVIDENCE_DIR, `.${filename}.${Date.now()}.tmp.webm`);
+
+  if (video) {
+    fs.writeFileSync(tempOutputPath, video.buffer);
+    fs.renameSync(tempOutputPath, outputPath);
+    return { filename, size: video.size };
+  }
+
+  if (frames.length === 0) {
+    throw new Error("Missing evidence video file or JPEG frames");
+  }
+
+  const frameRate = Math.max(1, Math.min(30, Number(request.body.frame_rate || 10)));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "anti-kt-evidence-"));
+  try {
+    frames.forEach((frame, index) => {
+      fs.writeFileSync(path.join(tempDir, `frame-${String(index + 1).padStart(4, "0")}.jpg`), frame.buffer);
+    });
+    await runFfmpeg([
+      "-y",
+      "-framerate",
+      String(frameRate),
+      "-i",
+      path.join(tempDir, "frame-%04d.jpg"),
+      "-c:v",
+      "libvpx",
+      "-pix_fmt",
+      "yuv420p",
+      "-r",
+      String(frameRate),
+      tempOutputPath
+    ]);
+    fs.renameSync(tempOutputPath, outputPath);
+  } finally {
+    fs.rmSync(tempOutputPath, { force: true });
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  return { filename, size: fs.statSync(outputPath).size };
 }
 
 function createApp(config, onEvidence) {
@@ -275,30 +340,31 @@ function createApp(config, onEvidence) {
   app.use(express.static(path.join(ROOT, "public")));
   app.use("/model", express.static(path.join(ROOT, "model")));
   app.use("/evidence", express.static(EVIDENCE_DIR));
-  app.post("/evidence", upload.single("video"), (request, response) => {
-    if (!request.file) {
-      response.status(400).json({ error: "Missing evidence video file" });
-      return;
+  app.post("/evidence", upload.any(), async (request, response, next) => {
+    try {
+      const file = await writeEvidenceFileFromUpload(request);
+
+      const evidence = {
+        type: "evidence",
+        id: path.basename(file.filename, path.extname(file.filename)),
+        timestamp: request.body.timestamp || new Date().toISOString(),
+        received_at: new Date().toISOString(),
+        student_name: studentNameFrom(request.body.student_name),
+        category: request.body.category || "Unknown",
+        status: request.body.status || request.body.category || "Unknown",
+        label: request.body.label || "Unknown",
+        confidence: Number(request.body.confidence || 0),
+        alert_duration_seconds: Number(request.body.alert_duration_seconds || 0),
+        video_url: `/evidence/${file.filename}`,
+        filename: file.filename,
+        size_bytes: file.size
+      };
+
+      onEvidence(evidence);
+      response.status(201).json(evidence);
+    } catch (error) {
+      next(error);
     }
-
-    const evidence = {
-      type: "evidence",
-      id: path.basename(request.file.filename, path.extname(request.file.filename)),
-      timestamp: request.body.timestamp || new Date().toISOString(),
-      received_at: new Date().toISOString(),
-      student_name: studentNameFrom(request.body.student_name),
-      category: request.body.category || "Unknown",
-      status: request.body.status || request.body.category || "Unknown",
-      label: request.body.label || "Unknown",
-      confidence: Number(request.body.confidence || 0),
-      alert_duration_seconds: Number(request.body.alert_duration_seconds || 0),
-      video_url: `/evidence/${request.file.filename}`,
-      filename: request.file.filename,
-      size_bytes: request.file.size
-    };
-
-    onEvidence(evidence);
-    response.status(201).json(evidence);
   });
   app.get("/vendor/tf.min.js", (_request, response) => {
     response.sendFile(path.join(ROOT, "node_modules", "@tensorflow", "tfjs", "dist", "tf.min.js"));
