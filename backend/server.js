@@ -159,8 +159,8 @@ function serialCommandForStatus(status, reason) {
 }
 
 const EVENT_CATEGORIES = {
-  flagged: new Set(["look right", "look left", "standing", "nothing", "crotch"]),
-  caution: new Set(["lean left", "lean right", "hands"]),
+  flagged: new Set(["lean right", "lean left", "standing", "nothing", "crotch"]),
+  caution: new Set(["look left", "look right", "hands"]),
   normal: new Set(["normal"])
 };
 
