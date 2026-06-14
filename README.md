@@ -1,4 +1,5 @@
-# anti-kt
+# Verity
+*This is the student endpoint. The Verity teacher dashboard is located at [https://github.com/eve-ite/verity-dashboard)](https://github.com/eve-ite/verity-dashboard)*
 
 Real-time exam room posture/behavior classifier backend.
 
