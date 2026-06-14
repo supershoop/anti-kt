@@ -115,21 +115,23 @@ Classification logs are written to `logs/classifications.csv`.
 ## Evidence clips
 
 The monitor page keeps a rolling 5-second video buffer in the browser. When a
-`Flagged` or `Caution` event is confirmed by the backend for at least 2 seconds, it
-records the event timestamp and uploads an evidence clip with the previous 5
+`Flagged` or `Caution` event is confirmed by the backend for at least 2 seconds,
+it records the event timestamp and uploads an evidence clip with the previous 5
 seconds plus the next 5 seconds of video.
 
-Evidence clips are stored in `evidence/` and served from:
-
-```text
-http://127.0.0.1:3000/evidence/<filename>.webm
-```
-
-The upload endpoint is:
+When the central dashboard sends a `dashboard_config` WebSocket message, the
+browser uploads evidence clips to that configured `evidence_upload_url`.
+Otherwise, clips fall back to the local backend endpoint:
 
 ```text
 POST /evidence
 Content-Type: multipart/form-data
+```
+
+Local fallback clips are stored in `evidence/` and served from:
+
+```text
+http://127.0.0.1:3000/evidence/<filename>.webm
 ```
 
 Fields:
@@ -171,6 +173,30 @@ The monitor browser sends classification messages to the backend in this shape:
   ]
 }
 ```
+
+The central dashboard can configure where evidence clips should be uploaded by
+sending this message after it opens the WebSocket:
+
+```json
+{
+  "type": "dashboard_config",
+  "evidence_upload_url": "https://dashboard.example.com/api/evidence"
+}
+```
+
+The backend acknowledges and broadcasts dashboard availability:
+
+```json
+{
+  "type": "dashboard_connection",
+  "connected": true,
+  "evidence_upload_url_configured": true,
+  "evidence_upload_url": "https://dashboard.example.com/api/evidence"
+}
+```
+
+The monitor page's `Live` indicator is based on this dashboard connection. It
+shows `Waiting` until a dashboard has supplied an evidence upload URL.
 
 Example message:
 

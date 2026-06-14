@@ -319,7 +319,9 @@ function createApp(config, onEvidence) {
     response.json({
       modelURL: "/model/model.json",
       metadataURL: "/model/metadata.json",
-      confidenceThreshold: config.confidence
+      confidenceThreshold: config.confidence,
+      evidenceUploadURL: config.evidenceUploadUrl || null,
+      dashboardConnected: config.dashboardConnected === true
     });
   });
   app.use((error, _request, response, _next) => {
@@ -339,6 +341,9 @@ function broadcast(clients, payload) {
 
 function main() {
   const config = parseArgs(process.argv);
+  config.dashboardConnected = false;
+  config.evidenceUploadUrl = null;
+  config.dashboardSocket = null;
   const logger = new CsvLogger(config.logPath);
   const arduino = new ArduinoDisplay(config.arduinoPort, config.baudRate);
   const alerts = new AlertState(config.eventSeconds, config.confidence);
@@ -357,6 +362,29 @@ function main() {
     if (latestStatus) {
       socket.send(JSON.stringify(latestStatus));
     }
+    socket.send(
+      JSON.stringify({
+        type: "dashboard_connection",
+        connected: config.dashboardConnected,
+        evidence_upload_url_configured: Boolean(config.evidenceUploadUrl),
+        evidence_upload_url: config.evidenceUploadUrl
+      })
+    );
+
+    socket.on("close", () => {
+      if (socket === config.dashboardSocket) {
+        config.dashboardConnected = false;
+        config.dashboardSocket = null;
+        config.evidenceUploadUrl = null;
+        broadcast(wss.clients, {
+          type: "dashboard_connection",
+          connected: false,
+          evidence_upload_url_configured: false,
+          evidence_upload_url: null
+        });
+        console.log("Dashboard disconnected");
+      }
+    });
 
     socket.on("message", (raw) => {
       let event;
@@ -364,6 +392,35 @@ function main() {
         event = JSON.parse(raw.toString());
       } catch {
         socket.send(JSON.stringify({ type: "error", message: "Invalid JSON message" }));
+        return;
+      }
+
+      if (event.type === "dashboard_config") {
+        const evidenceUploadUrl = String(event.evidence_upload_url || "").trim();
+        if (!evidenceUploadUrl) {
+          socket.send(JSON.stringify({ type: "error", message: "Missing evidence_upload_url" }));
+          return;
+        }
+
+        try {
+          new URL(evidenceUploadUrl);
+        } catch {
+          socket.send(JSON.stringify({ type: "error", message: "Invalid evidence_upload_url" }));
+          return;
+        }
+
+        config.dashboardConnected = true;
+        config.dashboardSocket = socket;
+        config.evidenceUploadUrl = evidenceUploadUrl;
+        const dashboardConnection = {
+          type: "dashboard_connection",
+          connected: true,
+          evidence_upload_url_configured: true,
+          evidence_upload_url: evidenceUploadUrl
+        };
+        socket.send(JSON.stringify({ type: "dashboard_config_ack", evidence_upload_url: evidenceUploadUrl }));
+        broadcast(wss.clients, dashboardConnection);
+        console.log(`Dashboard configured evidence upload URL: ${evidenceUploadUrl}`);
         return;
       }
 

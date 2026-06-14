@@ -36,6 +36,8 @@ let mediaRecorder;
 let rollingChunks = [];
 let activeClip = null;
 let currentConfirmedCategory = null;
+let evidenceUploadURL = null;
+let dashboardConnected = false;
 
 function studentName() {
   return studentNameInput.value.trim() || "Unknown student";
@@ -86,17 +88,14 @@ function websocketURL() {
 function connectSocket() {
   socket = new WebSocket(websocketURL());
   socket.addEventListener("open", () => {
-    connectionEl.textContent = "Live";
-    liveBadgeEl.classList.add("connected");
+    updateDashboardConnection(false);
   });
   socket.addEventListener("close", () => {
-    connectionEl.textContent = "Offline";
-    liveBadgeEl.classList.remove("connected");
+    updateDashboardConnection(false);
     setTimeout(connectSocket, 1000);
   });
   socket.addEventListener("error", () => {
-    connectionEl.textContent = "Retrying";
-    liveBadgeEl.classList.remove("connected");
+    updateDashboardConnection(false);
   });
   socket.addEventListener("message", (event) => {
     let message;
@@ -110,8 +109,21 @@ function connectSocket() {
     if (message.type === "status") {
       applyStatusMessage(message);
       maybeCaptureEventClip(message);
+    } else if (message.type === "dashboard_connection") {
+      applyDashboardConnection(message);
     }
   });
+}
+
+function applyDashboardConnection(message) {
+  evidenceUploadURL = message.evidence_upload_url || null;
+  updateDashboardConnection(message.connected === true && Boolean(evidenceUploadURL));
+}
+
+function updateDashboardConnection(isConnected) {
+  dashboardConnected = isConnected;
+  connectionEl.textContent = dashboardConnected ? "Live" : "Waiting";
+  liveBadgeEl.classList.toggle("connected", dashboardConnected);
 }
 
 function applyStatusMessage(message) {
@@ -195,6 +207,8 @@ async function loadModel() {
   }
   setRuntimeMessage("Loading model");
   const config = await fetch("/config.json").then((response) => response.json());
+  evidenceUploadURL = config.evidenceUploadURL || null;
+  updateDashboardConnection(config.dashboardConnected === true && Boolean(evidenceUploadURL));
   model = await tmPose.load(config.modelURL, config.metadataURL);
   setRuntimeMessage("Model loaded");
 }
@@ -328,7 +342,7 @@ async function finalizeEventClip() {
 
   try {
     const evidence = await uploadClip(blob, filename, clip);
-    setRuntimeMessage(`Uploaded ${evidence.filename}`);
+    setRuntimeMessage(`Uploaded ${evidence.filename || evidence.id || filename}`);
   } catch (error) {
     setRuntimeMessage(`Evidence upload failed: ${error.message}`, true);
     console.error(error);
@@ -346,6 +360,7 @@ function evidenceFilename(clip) {
 }
 
 async function uploadClip(blob, filename, clip) {
+  const uploadURL = evidenceUploadURL || "/evidence";
   const form = new FormData();
   form.append("timestamp", clip.eventTimestamp);
   form.append("student_name", clip.studentName || studentName());
@@ -356,7 +371,7 @@ async function uploadClip(blob, filename, clip) {
   form.append("alert_duration_seconds", String(clip.alertDurationSeconds ?? 0));
   form.append("video", blob, filename);
 
-  const response = await fetch("/evidence", {
+  const response = await fetch(uploadURL, {
     method: "POST",
     body: form
   });
