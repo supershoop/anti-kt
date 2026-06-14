@@ -121,12 +121,12 @@ class ArduinoDisplay {
         return;
       }
       console.log(`Arduino serial open on ${this.portPath}`);
-      setTimeout(() => this.sendStatus(false), 2000);
+      setTimeout(() => this.sendStatus("Normal", ""), 2000);
     });
   }
 
-  sendStatus(cheatingSuspected) {
-    const command = cheatingSuspected ? "CHEAT" : "CLEAR";
+  sendStatus(status, reason) {
+    const command = serialCommandForStatus(status, reason);
     if (command === this.lastCommand || !this.port || !this.port.isOpen) {
       return;
     }
@@ -140,28 +140,44 @@ class ArduinoDisplay {
   }
 }
 
+function serialCommandForStatus(status, reason) {
+  const normalized = String(status || "").trim().toLowerCase();
+  const cleanReason = String(reason || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[\r\n]/g, "");
+
+  if (normalized === "flagged") {
+    return `FAIL ${cleanReason || "Unknown"}`;
+  }
+  if (normalized === "caution") {
+    return `WARN ${cleanReason || "Unknown"}`;
+  }
+  return "CLEAR";
+}
+
 const EVENT_CATEGORIES = {
-  fail: new Set(["standing", "crotch", "croutch", "nothing"]),
-  risky: new Set(["leaning left", "leaning right", "hand"]),
-  allClear: new Set(["normal"])
+  flagged: new Set(["look right", "look left", "standing", "nothing", "crotch"]),
+  caution: new Set(["lean left", "lean right", "hands"]),
+  normal: new Set(["normal"])
 };
 
 function categoryForLabel(label, confidence, confidenceThreshold) {
   if (confidence < confidenceThreshold) {
-    return "All Clear";
+    return "Normal";
   }
 
   const normalized = String(label).trim().toLowerCase();
-  if (EVENT_CATEGORIES.fail.has(normalized)) {
-    return "Fail";
+  if (EVENT_CATEGORIES.flagged.has(normalized)) {
+    return "Flagged";
   }
-  if (EVENT_CATEGORIES.risky.has(normalized)) {
-    return "Risky";
+  if (EVENT_CATEGORIES.caution.has(normalized)) {
+    return "Caution";
   }
-  if (EVENT_CATEGORIES.allClear.has(normalized)) {
-    return "All Clear";
+  if (EVENT_CATEGORIES.normal.has(normalized)) {
+    return "Normal";
   }
-  return "All Clear";
+  return "Normal";
 }
 
 class AlertState {
@@ -175,7 +191,7 @@ class AlertState {
 
   update(label, confidence, timestampMs = Date.now()) {
     const candidateCategory = categoryForLabel(label, confidence, this.confidenceThreshold);
-    const alertCategory = candidateCategory === "Fail" || candidateCategory === "Risky";
+    const alertCategory = candidateCategory === "Flagged" || candidateCategory === "Caution";
 
     if (!alertCategory) {
       this.consecutiveRiskyFrames = 0;
@@ -194,14 +210,14 @@ class AlertState {
         ? (timestampMs - this.currentAlertStartedAt) / 1000
         : 0;
     const cheatingSuspected = alertCategory && alertDurationSeconds >= this.eventSeconds;
-    const confirmedCategory = cheatingSuspected ? candidateCategory : "All Clear";
+    const confirmedCategory = cheatingSuspected ? candidateCategory : "Normal";
 
     return {
       category: confirmedCategory,
       status: confirmedCategory,
       cheatingSuspected,
       consecutiveRiskyFrames: this.consecutiveRiskyFrames,
-      pendingCategory: alertCategory ? candidateCategory : "All Clear",
+      pendingCategory: alertCategory ? candidateCategory : "Normal",
       alertDurationSeconds
     };
   }
@@ -376,7 +392,7 @@ function main() {
         predictions: Array.isArray(event.predictions) ? event.predictions : []
       };
 
-      arduino.sendStatus(decision.cheatingSuspected);
+      arduino.sendStatus(decision.status, label);
       logger.write({
         timestamp,
         studentName,
@@ -398,7 +414,10 @@ function main() {
     console.log(`Backend listening on http://${config.host}:${config.port}`);
     console.log(`WebSocket status feed at ws://${config.host}:${config.port}/status`);
     console.log(`Event threshold: ${config.eventSeconds.toFixed(1)} seconds`);
-    console.log("Event mapping: Fail=Standing/Crotch/Nothing, Risky=Leaning Left/Leaning Right/Hand, All Clear=Normal");
+    console.log(
+      "Event mapping: Flagged=Look Right/Look Left/Standing/Nothing/Crotch, " +
+        "Caution=Leaning Right/Leaning Left/Hands, Normal=Normal"
+    );
   });
 }
 

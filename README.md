@@ -6,7 +6,7 @@ The Node backend serves the official Teachable Machine Pose classifier page,
 receives classification events over WebSocket, applies a sustained-event alert
 threshold, logs classifications, and sends status updates to an Arduino over
 serial.
-The Arduino sketch drives a 1602A LCD and rings a passive buzzer when cheating
+The Arduino sketch drives a 1602A LCD and rings an active buzzer when cheating
 is suspected.
 
 ## Hardware
@@ -14,7 +14,7 @@ is suspected.
 - USB camera or laptop webcam
 - Arduino-compatible board
 - 1602A 16x2 LCD wired in 4-bit mode
-- Passive buzzer on pin 8
+- Active buzzer on pin 7
 
 Default LCD pin mapping in `arduino/exam_status_controller/exam_status_controller.ino`:
 
@@ -84,22 +84,38 @@ Click **Start camera** and allow camera access.
 
 Event categories are:
 
-- `Fail`: `Standing`, `Crotch`/`Croutch`, `Nothing`
-- `Risky`: `Leaning Left`, `Leaning Right`, `Hand`
-- `All Clear`: `Normal`
+- `Flagged`: `Look Right`, `Look Left`, `Standing`, `Nothing`, `Crotch`
+- `Caution`: `Leaning Right`, `Leaning Left`, `Hand`
+- `Normal`: `Normal`
 
 The LCD and WebSocket status display:
 
-- `All clear` while the event threshold is not met.
-- `Cheating suspected` once the model predicts `Fail` or `Risky` continuously
+- `Normal` while the event threshold is not met.
+- `Cheating suspected` once the model predicts `Flagged` or `Caution` continuously
   at 70% confidence or higher for at least 2 seconds.
+
+Arduino serial messages are newline-delimited:
+
+```text
+FAIL <reason>
+WARN <reason>
+CLEAR
+```
+
+Examples:
+
+```text
+FAIL Look Right
+WARN Hand
+CLEAR
+```
 
 Classification logs are written to `logs/classifications.csv`.
 
 ## Evidence clips
 
 The monitor page keeps a rolling 5-second video buffer in the browser. When a
-`Fail` or `Risky` event is confirmed by the backend for at least 2 seconds, it
+`Flagged` or `Caution` event is confirmed by the backend for at least 2 seconds, it
 records the event timestamp and uploads an evidence clip with the previous 5
 seconds plus the next 5 seconds of video.
 
@@ -121,7 +137,7 @@ Fields:
 - `video`: `.webm` video file.
 - `timestamp`: event timestamp.
 - `student_name`: student name entered in the monitor page.
-- `category`: confirmed category, `Fail` or `Risky`.
+- `category`: confirmed category, `Flagged` or `Caution`.
 - `status`: same as `category`.
 - `label`: raw top model label.
 - `confidence`: raw top model confidence.
@@ -162,8 +178,8 @@ Example message:
 {
   "timestamp": "2026-06-13T14:30:12.123",
   "student_name": "Avery Chen",
-  "status": "All Clear",
-  "category": "All Clear",
+  "status": "Normal",
+  "category": "Normal",
   "cheating_suspected": false,
   "label": "Hand",
   "confidence": 0.938211,
@@ -182,13 +198,13 @@ Fields:
 - `type`: always `status`.
 - `timestamp`: local backend timestamp for the inference result.
 - `student_name`: student name entered in the monitor page, or `Unknown student` when blank.
-- `status`: confirmed display-ready event category, one of `Fail`, `Risky`, or `All Clear`.
+- `status`: confirmed display-ready event category, one of `Flagged`, `Caution`, or `Normal`.
 - `category`: same category value as `status`.
 - `cheating_suspected`: boolean alert state after applying the 70% confidence and sustained-event threshold.
 - `label`: raw top model label for the current frame.
 - `confidence`: model confidence for `label`.
 - `consecutive_risky_frames`: current risky-frame streak.
-- `alert_duration_seconds`: how long the current `Fail` or `Risky` category has been continuous.
+- `alert_duration_seconds`: how long the current `Flagged` or `Caution` category has been continuous.
 - `event_threshold_seconds`: configured event duration threshold.
 - `predictions`: all class probabilities sent by the classifier page.
 
@@ -197,17 +213,17 @@ When a browser uploads an evidence clip, all WebSocket clients also receive:
 ```json
 {
   "type": "evidence",
-  "id": "evidence-2026-06-13T18-42-11-123Z-risky-hand",
+  "id": "evidence-2026-06-13T18-42-11-123Z-caution-hand",
   "timestamp": "2026-06-13T18:42:06.000Z",
   "received_at": "2026-06-13T18:42:11.123Z",
   "student_name": "Avery Chen",
-  "category": "Risky",
-  "status": "Risky",
+  "category": "Caution",
+  "status": "Caution",
   "label": "Hand",
   "confidence": 0.938211,
   "alert_duration_seconds": 2.104,
-  "video_url": "/evidence/evidence-2026-06-13T18-42-11-123Z-risky-hand.webm",
-  "filename": "evidence-2026-06-13T18-42-11-123Z-risky-hand.webm",
+  "video_url": "/evidence/evidence-2026-06-13T18-42-11-123Z-caution-hand.webm",
+  "filename": "evidence-2026-06-13T18-42-11-123Z-caution-hand.webm",
   "size_bytes": 384000
 }
 ```

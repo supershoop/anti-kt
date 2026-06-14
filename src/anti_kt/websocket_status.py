@@ -40,6 +40,7 @@ class WebSocketStatusServer:
 
     @property
     def url(self) -> str:
+        print(self.host);
         return f"ws://{self.host}:{self.port}/status"
 
     def start(self) -> None:

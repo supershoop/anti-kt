@@ -24,8 +24,8 @@
       </label>
       <div class="summary">
         <div class="tally"><b id="cTotal">1</b><em>Tracked</em></div>
-        <div class="tally safe"><i></i><b id="cSafe">1</b><em>Safe</em></div>
-        <div class="tally risky"><i></i><b id="cRisky">0</b><em>Risky</em></div>
+        <div class="tally safe"><i></i><b id="cSafe">1</b><em>Normal</em></div>
+        <div class="tally risky"><i></i><b id="cRisky">0</b><em>Caution</em></div>
         <div class="tally fail zero" id="flagStat"><i></i><b id="cFail">0</b><em>Flagged</em></div>
         <span class="live" id="liveBadge"><span class="blink"></span><span id="connection">Connecting</span></span>
       </div>
@@ -40,7 +40,7 @@
         <div class="video-panel">
           <div class="video-wrap">
             <canvas id="canvas" width="640" height="480"></canvas>
-            <div id="status" class="status-tag safe">All Clear</div>
+            <div id="status" class="status-tag safe">Normal</div>
           </div>
           <div class="control-row">
             <button id="start" type="button">Start camera</button>
@@ -57,7 +57,7 @@
               </div>
               <div class="seat">CAM-01</div>
             </div>
-            <div class="card-status"><span id="cardStatus">Safe</span></div>
+            <div class="card-status"><span id="cardStatus">Normal</span></div>
             <div class="metrics">
               <div class="conf">
                 <div class="v"><span id="confidenceValue">0</span><span class="pct">%</span></div>
@@ -78,14 +78,6 @@
               <span id="clock">--:--:--</span>
             </div>
             <div id="predictions" class="predictions"></div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-head">
-              <h2>Evidence</h2>
-              <span id="clipCount">0 clips</span>
-            </div>
-            <div id="clips" class="clips"></div>
           </section>
         </aside>
       </section>

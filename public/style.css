@@ -36,11 +36,15 @@ html.light {
 
 html,
 body {
-  min-height: 100%;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 body {
   margin: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   background: var(--bg);
   background-image: radial-gradient(var(--dot) 1px, transparent 1px);
   background-size: 22px 22px;
@@ -61,15 +65,13 @@ body {
 }
 
 header {
-  position: sticky;
-  top: 0;
   z-index: 10;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 28px 40px;
+  gap: 16px 40px;
   flex-wrap: wrap;
-  padding: 22px 26px 20px;
+  padding: 16px 26px 14px;
   border-bottom: 3px solid var(--text);
   background: var(--bg);
 }
@@ -226,14 +228,18 @@ html.light .mode-toggle span[data-mode="light"] {
 }
 
 main {
-  padding: 22px 26px 44px;
+  min-height: 0;
+  padding: 14px 26px;
+  overflow: hidden;
 }
 
 .monitor-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 390px);
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
+  height: 100%;
+  min-height: 0;
 }
 
 .video-panel,
@@ -244,13 +250,15 @@ main {
 }
 
 .video-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
   overflow: hidden;
 }
 
 .video-wrap {
   position: relative;
-  aspect-ratio: 4 / 3;
-  min-height: 260px;
+  min-height: 0;
   background: #050506;
 }
 
@@ -373,7 +381,11 @@ button#start:disabled {
 
 .side-stack {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 14px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .card {
@@ -565,7 +577,11 @@ button#start:disabled {
 }
 
 .panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
   padding: 14px;
+  overflow: hidden;
 }
 
 .panel-head {
@@ -591,10 +607,13 @@ button#start:disabled {
   letter-spacing: 0.08em;
 }
 
-.predictions,
-.clips {
+.predictions {
   display: grid;
+  align-content: start;
   gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
 }
 
 .prediction {
@@ -624,31 +643,10 @@ button#start:disabled {
   background: var(--text-dim);
 }
 
-.clip {
-  display: grid;
-  gap: 5px;
-  padding: 9px 0;
-  border-top: 1px solid var(--track);
-}
-
-.clip a {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 700;
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-
-.clip span {
-  color: var(--text-dim);
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
 @media (max-width: 920px) {
   .monitor-grid {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
 
@@ -681,7 +679,7 @@ button#start:disabled {
 
   .summary {
     order: 4;
-    gap: 16px;
+    gap: 12px;
   }
 
   .live {
@@ -690,5 +688,14 @@ button#start:disabled {
 
   .control-row {
     grid-template-columns: 1fr;
+    padding: 10px;
+  }
+
+  .tally b {
+    font-size: 20px;
+  }
+
+  .tally em {
+    font-size: 10px;
   }
 }

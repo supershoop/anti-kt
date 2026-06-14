@@ -5,7 +5,6 @@ const liveBadgeEl = document.getElementById("liveBadge");
 const topLabelEl = document.getElementById("top-label");
 const runtimeMessageEl = document.getElementById("runtime-message");
 const predictionsEl = document.getElementById("predictions");
-const clipsEl = document.getElementById("clips");
 const startButton = document.getElementById("start");
 const modeButton = document.getElementById("modeBtn");
 const activeCardEl = document.getElementById("activeCard");
@@ -15,7 +14,6 @@ const confidenceBarEl = document.getElementById("confidenceBar");
 const alertDurationEl = document.getElementById("alertDuration");
 const frameStreakEl = document.getElementById("frameStreak");
 const eventThresholdEl = document.getElementById("eventThreshold");
-const clipCountEl = document.getElementById("clipCount");
 const clockEl = document.getElementById("clock");
 const countSafeEl = document.getElementById("cSafe");
 const countRiskyEl = document.getElementById("cRisky");
@@ -38,8 +36,6 @@ let mediaRecorder;
 let rollingChunks = [];
 let activeClip = null;
 let currentConfirmedCategory = null;
-let clipCount = 0;
-const evidenceLinks = new Set();
 
 function studentName() {
   return studentNameInput.value.trim() || "Unknown student";
@@ -68,17 +64,17 @@ function setRuntimeMessage(message, isError = false) {
 
 function statusClassForCategory(category) {
   const normalized = String(category || "").trim().toLowerCase();
-  if (normalized === "fail") {
+  if (normalized === "flagged" || normalized === "fail") {
     return "fail";
   }
-  if (normalized === "risky") {
+  if (normalized === "caution" || normalized === "risky") {
     return "risky";
   }
   return "safe";
 }
 
 function displayStatus(category) {
-  return statusClassForCategory(category) === "safe" ? "All Clear" : category;
+  return statusClassForCategory(category) === "safe" ? "Normal" : category;
 }
 
 function websocketURL() {
@@ -114,14 +110,12 @@ function connectSocket() {
     if (message.type === "status") {
       applyStatusMessage(message);
       maybeCaptureEventClip(message);
-    } else if (message.type === "evidence") {
-      addClipLink(message.video_url, message.filename, message);
     }
   });
 }
 
 function applyStatusMessage(message) {
-  const category = message.category || message.status || "All Clear";
+  const category = message.category || message.status || "Normal";
   const statusClass = statusClassForCategory(category);
   const display = displayStatus(category);
   const confidencePercent = Math.max(0, Math.min(100, Number(message.confidence || 0) * 100));
@@ -132,7 +126,7 @@ function applyStatusMessage(message) {
 
   activeCardEl.classList.remove("safe", "risky", "fail", "flash");
   activeCardEl.classList.add(statusClass);
-  cardStatusEl.textContent = statusClass === "safe" ? "Safe" : display;
+  cardStatusEl.textContent = statusClass === "safe" ? "Normal" : display;
   topLabelEl.textContent = message.label
     ? `${message.label} ${confidencePercent.toFixed(1)}%`
     : "Waiting for classifier";
@@ -282,7 +276,8 @@ function maybeCaptureEventClip(status) {
   const category = String(status.category || status.status || "").trim();
   const normalized = category.toLowerCase();
   const confirmedAlert =
-    status.cheating_suspected === true && (normalized === "fail" || normalized === "risky");
+    status.cheating_suspected === true &&
+    (normalized === "flagged" || normalized === "caution" || normalized === "fail" || normalized === "risky");
 
   if (!confirmedAlert) {
     currentConfirmedCategory = null;
@@ -333,7 +328,6 @@ async function finalizeEventClip() {
 
   try {
     const evidence = await uploadClip(blob, filename, clip);
-    addClipLink(evidence.video_url, evidence.filename, evidence);
     setRuntimeMessage(`Uploaded ${evidence.filename}`);
   } catch (error) {
     setRuntimeMessage(`Evidence upload failed: ${error.message}`, true);
@@ -371,37 +365,6 @@ async function uploadClip(blob, filename, clip) {
     throw new Error(payload.error || `HTTP ${response.status}`);
   }
   return payload;
-}
-
-function addClipLink(url, filename, clip) {
-  if (!url) {
-    return;
-  }
-  const key = clip.id || url;
-  if (evidenceLinks.has(key)) {
-    return;
-  }
-  evidenceLinks.add(key);
-  clipCount += 1;
-  clipCountEl.textContent = `${clipCount} ${clipCount === 1 ? "clip" : "clips"}`;
-
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.textContent = filename || url;
-
-  const meta = document.createElement("span");
-  const timestamp = clip.timestamp || clip.eventTimestamp || clip.received_at;
-  const time = timestamp ? new Date(timestamp).toLocaleTimeString() : "saved";
-  const confidence = Number(clip.confidence || 0) * 100;
-  meta.textContent = `${clip.student_name || clip.studentName || "Unknown student"} / ${
-    clip.category || "Event"
-  } / ${confidence.toFixed(1)}% / ${time}`;
-
-  const row = document.createElement("div");
-  row.className = "clip";
-  row.append(link, meta);
-  clipsEl.prepend(row);
 }
 
 async function loop() {
