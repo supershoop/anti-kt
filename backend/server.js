@@ -267,8 +267,15 @@ function createEvidenceUpload() {
 function createApp(config, onEvidence) {
   const app = express();
   const upload = createEvidenceUpload();
-  app.use((_request, response, next) => {
+  app.use((request, response, next) => {
     response.setHeader("Cache-Control", "no-store");
+    response.setHeader("Access-Control-Allow-Origin", "*");
+    response.setHeader("Access-Control-Allow-Methods", "GET,HEAD,POST,OPTIONS");
+    response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    if (request.method === "OPTIONS") {
+      response.sendStatus(204);
+      return;
+    }
     next();
   });
   app.use(express.json());
